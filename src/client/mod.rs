@@ -4,7 +4,10 @@ mod compendium;
 
 use crate::models::ApiErrorResponse;
 
-const DEFAULT_BASE_URL: &str = "http://localhost:8080/api/v1";
+const DEFAULT_BASE_URL: &str = match option_env!("API_URL") {
+    Some(url) => url,
+    None => "http://localhost:8080/api/v1",
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
