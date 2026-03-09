@@ -160,7 +160,7 @@ dependencies = [
 
 [[package]]
 name = "cli_adventure_sheet"
-version = "0.1.0"
+version = "0.5.1"
 dependencies = [
  "chrono",
  "crossterm",
