@@ -22,6 +22,22 @@ pub fn interpret_feature(text: &str) -> Feature {
         return Feature::GrantsOriginFeat { choose: n };
     }
 
+    // ── Grants Spell (2024 always prepared) ──────────────────────────────────
+    // e.g. "You always have the Divine Smite spell prepared."
+    if lower.contains("always have the") && lower.contains("spell prepared") {
+        // Try to extract the name between "always have the " and " spell prepared"
+        if let Some(start) = lower.find("always have the ") {
+            if let Some(end) = lower[start + 16..].find(" spell prepared") {
+                let name = text[start + 16..start + 16 + end].trim();
+                if !name.is_empty() {
+                    return Feature::GrantsSpell {
+                        spell_name: name.to_string(),
+                    };
+                }
+            }
+        }
+    }
+
     // ── Weapon Mastery ──────────────────────────────────────────────────────
     // e.g. "Choose 2 weapon masteries", "you learn one Weapon Mastery"
     if lower.contains("weapon master") {

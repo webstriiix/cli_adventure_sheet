@@ -167,11 +167,25 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if let Some(idx) = app.builder.list_state.selected() {
                 app.builder.equipment_option = Some(idx);
+                
                 // Move to Spells if caster, otherwise Details
-                if app.builder.spellcasting_type == "none" {
-                    app.builder.step = CharacterCreationStep::Details;
-                } else {
+                let mut is_caster = app.builder.spellcasting_type != "none";
+                
+                // Backup check: if spellcasting_type is none, check the actual class data
+                if !is_caster {
+                    if let Some(c_id) = app.builder.class_id {
+                        if let Some(class) = app.classes.iter().find(|c| c.id == c_id) {
+                            if class.spellcasting_ability.is_some() {
+                                is_caster = true;
+                            }
+                        }
+                    }
+                }
+
+                if is_caster {
                     app.builder.step = CharacterCreationStep::Spells;
+                } else {
+                    app.builder.step = CharacterCreationStep::Details;
                 }
                 app.builder.focus_index = 0;
             }

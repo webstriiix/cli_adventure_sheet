@@ -112,7 +112,9 @@ pub struct App {
 
     // Spell slots and hit dice tracking
     pub spell_slots_used: [u8; 9],
-    pub hit_dice_used: [u8; 4], // Index 0: d6, 1: d8, 2: d10, 3: d12
+    pub spell_level_filter: Option<i32>, // None = All, Some(0) = cantrips, Some(1-9) = spell levels
+    pub spell_level_tab_index: usize,    // 0=All, 1=0(cantrips), 2=1st, ..., 6=5th
+    pub hit_dice_used: [u8; 4],          // Index 0: d6, 1: d8, 2: d10, 3: d12
 
     // Compendium data for pickers
     pub all_spells: Vec<Spell>,
@@ -235,6 +237,8 @@ impl App {
             conditions: Vec::new(),
             concentrating_on: None,
             spell_slots_used: [0u8; 9],
+            spell_level_filter: None,
+            spell_level_tab_index: 0,
             hit_dice_used: [0u8; 4],
 
             all_spells: Vec::new(),
@@ -376,8 +380,15 @@ impl App {
 
         for inv in self.char_inventory.iter().filter(|i| i.is_equipped) {
             if let Some(item) = self.all_items.iter().find(|i| i.id == inv.item_id) {
-                match item.item_type.as_deref() {
-                    Some("LA") => {
+                let itype = item
+                    .item_type
+                    .as_deref()
+                    .unwrap_or("")
+                    .split('|')
+                    .next()
+                    .unwrap_or("");
+                match itype {
+                    "LA" => {
                         let ac = item
                             .armor_class
                             .as_ref()
@@ -385,7 +396,7 @@ impl App {
                             .unwrap_or(11) as i32;
                         base = ac + dex_mod;
                     }
-                    Some("MA") => {
+                    "MA" => {
                         let ac = item
                             .armor_class
                             .as_ref()
@@ -393,7 +404,7 @@ impl App {
                             .unwrap_or(13) as i32;
                         base = ac + dex_mod.min(2);
                     }
-                    Some("HA") => {
+                    "HA" => {
                         let ac = item
                             .armor_class
                             .as_ref()
@@ -401,7 +412,7 @@ impl App {
                             .unwrap_or(16) as i32;
                         base = ac;
                     }
-                    Some("S") => {
+                    "S" => {
                         // Shield always +2
                         shield_bonus = 2;
                     }
@@ -456,6 +467,50 @@ impl App {
         Some(prof + modifier)
     }
 
+    /// Returns per-class spellcasting stats: (class_name, ability_mod, spell_attack, save_dc).
+    pub fn spellcasting_classes(&self) -> Vec<(String, i32, i32, i32)> {
+        let character = match self.active_character.as_ref() {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+        let level = crate::utils::level_from_xp(character.experience_pts);
+        let prof = crate::utils::proficiency_bonus(level);
+        let mut results = Vec::new();
+
+        for cc in &self.char_classes {
+            if let Some(class) = self.classes.iter().find(|cl| cl.id == cc.class_id) {
+                if let Some(ability_str) = &class.spellcasting_ability {
+                    let ability = match ability_str.to_lowercase().as_str() {
+                        "int" => "int",
+                        "wis" => "wis",
+                        "cha" => "cha",
+                        _ => continue,
+                    };
+                    let score = crate::utils::ch_ability_score(character, ability);
+                    let modifier = crate::utils::ability_modifier(score);
+                    let attack = prof + modifier;
+                    let dc = 8 + prof + modifier;
+                    results.push((class.name.clone(), modifier, attack, dc));
+                }
+            }
+        }
+
+        // Deduplicate by class name
+        results.dedup_by(|a, b| a.0 == b.0);
+
+        // If empty, fall back to single-class method
+        if results.is_empty() {
+            if let (Some(atk), Some(dc)) = (self.spell_attack_bonus(), self.spell_save_dc()) {
+                let ability = self.spellcasting_ability().unwrap_or("");
+                let score = crate::utils::ch_ability_score(character, ability);
+                let modifier = crate::utils::ability_modifier(score);
+                results.push((self.char_class_name.clone(), modifier, atk, dc));
+            }
+        }
+
+        results
+    }
+
     /// Extract walk speed from race's `speed` JsonValue.
     pub fn race_speed(&self) -> i32 {
         let race = self
@@ -491,12 +546,74 @@ impl App {
     }
 
     /// Returns a list of all weapons that have a mastery property, optionally filtered by search.
+    /// Includes hardcoded 2024 masteries if the backend doesn't provide them.
     pub fn filtered_mastery_weapons(&self) -> Vec<crate::models::compendium::Item> {
-        let q = self.picker_search.to_lowercase();
+        let q = self.builder.feat_picker_search.to_lowercase();
+
+        // 2024 Weapon Mastery Mapping
+        let masteries = [
+            ("Greataxe", "Cleave"),
+            ("Halberd", "Cleave"),
+            ("Glaive", "Graze"),
+            ("Greatsword", "Graze"),
+            ("Dagger", "Nick"),
+            ("Light Hammer", "Nick"),
+            ("Sickle", "Nick"),
+            ("Scimitar", "Nick"),
+            ("Greatclub", "Push"),
+            ("Pike", "Push"),
+            ("Warhammer", "Push"),
+            ("Heavy Crossbow", "Push"),
+            ("Mace", "Sap"),
+            ("Spear", "Sap"),
+            ("Flail", "Sap"),
+            ("Longsword", "Sap"),
+            ("Morningstar", "Sap"),
+            ("War Pick", "Sap"),
+            ("Club", "Slow"),
+            ("Javelin", "Slow"),
+            ("Light Crossbow", "Slow"),
+            ("Sling", "Slow"),
+            ("Whip", "Slow"),
+            ("Longbow", "Slow"),
+            ("Musket", "Slow"),
+            ("Quarterstaff", "Topple"),
+            ("Battleaxe", "Topple"),
+            ("Lance", "Topple"),
+            ("Maul", "Topple"),
+            ("Trident", "Topple"),
+            ("Handaxe", "Vex"),
+            ("Dart", "Vex"),
+            ("Shortbow", "Vex"),
+            ("Rapier", "Vex"),
+            ("Shortsword", "Vex"),
+            ("Blowgun", "Vex"),
+            ("Hand Crossbow", "Vex"),
+            ("Pistol", "Vex"),
+        ];
+
         self.all_items
             .iter()
-            .filter(|i| i.mastery.is_some() && (q.is_empty() || i.name.to_lowercase().contains(&q)))
-            .cloned()
+            .filter_map(|i| {
+                let mut item = i.clone();
+
+                // If backend doesn't have mastery, check our hardcoded 2024 list
+                if item.mastery.is_none() || item.mastery.as_ref().unwrap().is_empty() {
+                    if let Some((_, m)) = masteries
+                        .iter()
+                        .find(|(w, _)| i.name.to_lowercase() == w.to_lowercase())
+                    {
+                        item.mastery = Some(vec![m.to_string()]);
+                    }
+                }
+
+                if item.mastery.is_some() && (q.is_empty() || item.name.to_lowercase().contains(&q))
+                {
+                    Some(item)
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
@@ -553,5 +670,194 @@ impl App {
                 }
             })
             .unwrap_or_else(|| format!("Spell #{spell_id}"))
+    }
+
+    /// Checks all current class features and ensures any "always prepared" spells
+    /// are present in the character's spell list and marked as prepared.
+    pub fn sync_always_prepared_spells(&mut self) {
+        let mut to_add = Vec::new();
+
+        for feature in &self.char_class_features {
+            if let crate::models::features::Feature::GrantsSpell { spell_name } =
+                feature.interpret()
+            {
+                // Find this spell in the compendium (lenient name matching)
+                let target_name = spell_name.to_lowercase();
+                if let Some(spell) = self.all_spells.iter().find(|s| {
+                    let s_name = s.name.to_lowercase();
+                    s_name == target_name || s_name.starts_with(&format!("{} ", target_name))
+                }) {
+                    // Check if character already has it
+                    if !self.char_spells.iter().any(|cs| cs.spell_id == spell.id) {
+                        to_add.push(spell.id);
+                    } else if let Some(cs) = self
+                        .char_spells
+                        .iter_mut()
+                        .find(|cs| cs.spell_id == spell.id)
+                    {
+                        // Ensure it is prepared if already present
+                        cs.is_prepared = true;
+                    }
+                }
+            }
+        }
+
+        // Add missing ones (local only, normally would persist to API)
+        for spell_id in to_add {
+            self.char_spells
+                .push(crate::models::character::CharacterSpell {
+                    character_id: self
+                        .active_character
+                        .as_ref()
+                        .map(|c| c.id)
+                        .unwrap_or_default(),
+                    spell_id,
+                    is_prepared: true,
+                });
+        }
+    }
+
+    /// Returns a list of spell IDs that are granted by features (always prepared).
+    pub fn always_prepared_spell_ids(&self) -> Vec<i32> {
+        let mut ids = Vec::new();
+        for feature in &self.char_class_features {
+            if let crate::models::features::Feature::GrantsSpell { spell_name } =
+                feature.interpret()
+            {
+                let target_name = spell_name.to_lowercase();
+                if let Some(spell) = self.all_spells.iter().find(|s| {
+                    let s_name = s.name.to_lowercase();
+                    s_name == target_name || s_name.starts_with(&format!("{} ", target_name))
+                }) {
+                    ids.push(spell.id);
+                }
+            }
+        }
+        ids
+    }
+
+    /// Recalculates maximum uses for specific features like "Lay on Hands"
+    /// and "Channel Divinity" based on 2024 scaling rules.
+    pub fn sync_resource_limits(&mut self) {
+        let mut paladin_level = self
+            .char_classes
+            .iter()
+            .find(|cc| {
+                self.classes
+                    .iter()
+                    .find(|cl| cl.id == cc.class_id)
+                    .map(|cl| cl.name.to_lowercase() == "paladin")
+                    .unwrap_or(false)
+            })
+            .map(|cc| cc.level)
+            .unwrap_or(0);
+
+        // Fallback for mono-class Paladins if char_classes is empty
+        if paladin_level == 0 && self.char_class_name.to_lowercase() == "paladin" {
+            if let Some(c) = &self.active_character {
+                paladin_level = crate::utils::level_from_xp(c.experience_pts);
+            }
+        }
+
+        if paladin_level == 0 {
+            return;
+        }
+
+        if let Some(actions) = self.char_actions.as_mut() {
+            // Update Lay on Hands: 5 * Paladin Level
+            // Search across ALL categories (All, Action, BonusAction, etc.)
+            let expected_max = 5 * paladin_level;
+
+            let lists = vec![
+                &mut actions.all,
+                &mut actions.attack,
+                &mut actions.action,
+                &mut actions.bonus_action,
+                &mut actions.reaction,
+                &mut actions.other,
+                &mut actions.limited_use,
+            ];
+
+            for list in lists {
+                for item in list.iter_mut() {
+                    if item.name.to_lowercase().contains("lay on hands") {
+                        if item.max_uses != Some(expected_max) {
+                            item.max_uses = Some(expected_max);
+                            if item.current_uses.is_none() || item.current_uses > Some(expected_max)
+                            {
+                                item.current_uses = Some(expected_max);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Update Channel Divinity: 2 at Level 3, 3 at Level 11
+            let cd_exists = actions
+                .limited_use
+                .iter()
+                .any(|a| a.name.to_lowercase().contains("channel divinity"));
+            if cd_exists {
+                if let Some(cd) = actions
+                    .limited_use
+                    .iter_mut()
+                    .find(|a| a.name.to_lowercase().contains("channel divinity"))
+                {
+                    let expected_max = if paladin_level >= 11 {
+                        3
+                    } else if paladin_level >= 3 {
+                        2
+                    } else {
+                        cd.max_uses.unwrap_or(1)
+                    };
+
+                    if cd.max_uses != Some(expected_max) {
+                        cd.max_uses = Some(expected_max);
+                        if cd.current_uses.is_none() || cd.current_uses > Some(expected_max) {
+                            cd.current_uses = Some(expected_max);
+                        }
+                    }
+                }
+            } else if paladin_level >= 3 {
+                // AUTO-GRANT if missing
+                let max = if paladin_level >= 11 { 3 } else { 2 };
+                actions.limited_use.push(crate::models::actions::ActionEntry {
+                    name: "Channel Divinity".to_string(),
+                    source: Some("Paladin".to_string()),
+                    description: Some("You can channel divine energy directly from the Outer Planes, using it to fuel magical effects. You regain one of its expended uses when you finish a Short Rest, and you regain all expended uses when you finish a Long Rest.".to_string()),
+                    range: None,
+                    hit_bonus: None,
+                    damage: None,
+                    max_uses: Some(max),
+                    current_uses: Some(max),
+                    reset_type: Some("Short/Long Rest".to_string()),
+                    time: None,
+                });
+            }
+
+            // Auto-grant Divine Sense if missing
+            if paladin_level >= 3 {
+                let ds_exists = actions
+                    .all
+                    .iter()
+                    .any(|a| a.name.to_lowercase().contains("divine sense"));
+                if !ds_exists {
+                    let ds = crate::models::actions::ActionEntry {
+                        name: "Divine Sense".to_string(),
+                        source: Some("Paladin".to_string()),
+                        description: Some("As a Bonus Action, you can open your awareness to detect Celestials, Fiends, and Undead within 60 feet.".to_string()),
+                        range: Some("60 ft".to_string()),
+                        hit_bonus: None,
+                        damage: None,
+                        max_uses: None,
+                        current_uses: None,
+                        reset_type: None,
+                        time: Some(serde_json::json!({"number": 1, "unit": "bonus"})),
+                    };
+                    actions.all.push(ds.clone());
+                    actions.bonus_action.push(ds);
+                }
+            }
+        }
     }
 }

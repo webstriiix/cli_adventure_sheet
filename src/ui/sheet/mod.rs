@@ -20,6 +20,11 @@ use crate::app::App;
 use crate::models::app_state::{PickerMode, SheetTab};
 
 pub fn render(app: &mut App, frame: &mut Frame) {
+    // Ensure "always prepared" spells from features (like Divine Smite) are in the list
+    app.sync_always_prepared_spells();
+    // Ensure scaling resources like Lay on Hands and Channel Divinity are updated
+    app.sync_resource_limits();
+
     let area = frame.area();
 
     let chunks = Layout::vertical([
@@ -287,6 +292,8 @@ fn render_help_bar(app: &App, frame: &mut Frame, area: Rect) {
                 Span::raw(" concentrate  "),
                 Span::styled("K", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" details  "),
+                Span::styled("Tab/S-Tab", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(" level filter  "),
                 Span::styled("Up/Down", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" select  "),
                 Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
@@ -609,6 +616,11 @@ fn render_subclass_picker(app: &mut App, frame: &mut Frame, area: Rect) {
         .iter()
         .map(|swf| {
             let s = &swf.subclass;
+            let source = if s.source_slug.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", s.source_slug)
+            };
             let unlock = format!(" (unlocks at level {})", s.unlock_level);
             ListItem::new(Line::from(vec![
                 Span::styled(
@@ -617,6 +629,7 @@ fn render_subclass_picker(app: &mut App, frame: &mut Frame, area: Rect) {
                         .fg(Color::White)
                         .add_modifier(Modifier::BOLD),
                 ),
+                Span::styled(source, Style::default().fg(Color::Cyan)),
                 Span::styled(unlock, Style::default().fg(Color::DarkGray)),
             ]))
         })

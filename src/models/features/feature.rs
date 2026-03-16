@@ -22,4 +22,7 @@ pub enum Feature {
 
     /// This feature/feat itself grants one (or more) Origin feats.
     GrantsOriginFeat { choose: u8 },
+
+    /// This feature grants a specific spell that is always prepared.
+    GrantsSpell { spell_name: String },
 }

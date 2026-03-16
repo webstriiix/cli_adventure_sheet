@@ -133,6 +133,19 @@ pub fn submit_character_from_builder(app: &mut App) {
                 }
             }
 
+            // Add selected spells
+            // Note: We use app.builder.known_spells which stores the IDs selected in Step 7.
+            // For prepared casters (Paladin, Cleric), these count as their initially prepared spells.
+            // For known casters (Bard, Sorcerer), these are their known spells.
+            // We set is_prepared=true for convenience.
+            for spell_id in &app.builder.known_spells {
+                let req = crate::models::character::AddSpellRequest {
+                    spell_id: *spell_id,
+                    is_prepared: Some(true),
+                };
+                let _ = rt.block_on(app.client.add_spell(id, &req));
+            }
+
             app.builder = BuilderState::default();
             app.fetch_characters();
             app.load_character_sheet(id);

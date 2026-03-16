@@ -122,21 +122,33 @@ impl App {
 
     /// Build a display string of all classes (primary + multiclasses), e.g. "Wizard 5 / Fighter 2"
     pub fn all_classes_display(&self) -> String {
-        if self.char_classes.is_empty() {
-            return String::new();
-        }
-
         let primary_level = self
             .active_character
             .as_ref()
             .map(|c| crate::utils::level_from_xp(c.experience_pts))
             .unwrap_or(1);
 
-        let mc_total: i32 = self.char_classes.iter().map(|cc| cc.level).sum();
+        if self.char_classes.is_empty() {
+            return format!("{} {}", self.char_class_name, primary_level);
+        }
+
+        // Calculate primary effective level (Total level - sum of multiclass levels)
+        let mc_total: i32 = self
+            .char_classes
+            .iter()
+            .filter(|cc| !cc.is_primary && cc.class_id != self.active_class_id)
+            .map(|cc| cc.level)
+            .sum();
         let primary_effective = (primary_level - mc_total).max(1);
 
         let mut parts = vec![format!("{} {}", self.char_class_name, primary_effective)];
+        
         for cc in &self.char_classes {
+            // Only add if it's not the primary class (to avoid "Paladin 3 / Paladin 3")
+            if cc.is_primary || cc.class_id == self.active_class_id {
+                continue;
+            }
+            
             let name = self
                 .classes
                 .iter()
