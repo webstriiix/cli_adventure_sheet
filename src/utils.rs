@@ -50,6 +50,30 @@ pub fn ability_name(index: usize) -> &'static str {
     ABILITY_NAMES[index]
 }
 
+/// Returns the maximum number of prepared spells for a given class and level.
+/// Defaults to Level + Modifier for unknown classes, but uses the 2024 PHB fixed table for Paladins.
+pub fn max_prepared_spells(class_name: &str, level: i32, modifier: i32) -> i32 {
+    match class_name.to_lowercase().as_str() {
+        "paladin" => match level {
+            1 => 2,
+            2 => 3,
+            3 => 4,
+            4 => 5,
+            5..=6 => 6,
+            7..=8 => 7,
+            9..=10 => 8,
+            11..=12 => 10,
+            13..=14 => 11,
+            15..=16 => 12,
+            17..=18 => 14,
+            19..=20 => 15,
+            _ => 15,
+        },
+        // Fallback for others (2014 style or generic)
+        _ => level.max(1) + modifier,
+    }
+}
+
 pub fn standard_array_value(index: usize) -> i32 {
     STANDARD_ARRAY[index]
 }
@@ -62,15 +86,15 @@ pub fn spell_slots_max(caster_progression: &str, char_level: i32, slot_idx: usiz
     let caster_level = match caster_progression.to_lowercase().as_str() {
         // Progression-based (from API caster_progression field)
         "full" => char_level,
-        "1/2" => char_level / 2,
-        "1/3" => char_level / 3,
+        "1/2" => (char_level + 1) / 2, // 2024 rules: Level 1 -> 1, Level 2 -> 1, Level 3 -> 2
+        "1/3" => (char_level + 2) / 3, // 2024 rules: Level 1 -> 1, Level 4 -> 2
         "pact" => char_level, // pact magic handled separately; use same table for simplicity
         "artificer" => char_level, // artificer has its own progression similar to full
         // Legacy class name fallback
         "wizard" | "sorcerer" | "cleric" | "druid" | "bard" => char_level,
-        "paladin" | "ranger" => char_level / 2,
+        "paladin" | "ranger" => (char_level + 1) / 2,
         "warlock" => char_level,
-        "fighter" | "rogue" => char_level / 3,
+        "fighter" | "rogue" => (char_level + 2) / 3,
         _ => 0,
     };
     if caster_level < 1 {

@@ -112,11 +112,24 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
     // ── Detail panel ─────────────────────────────────────────────────────────
     let detail_lines = if let Some(weapon) = filtered.get(app.builder.feat_picker_index) {
-        let mastery_tag = weapon
+        let mastery_name = weapon
             .mastery
             .as_ref()
-            .map(|v| v.join(", "))
+            .and_then(|v| v.first())
+            .cloned()
             .unwrap_or_else(|| "—".to_string());
+
+        let description = match mastery_name.to_lowercase().as_str() {
+            "cleave" => "Allows you to make an additional attack against a second target adjacent to your first.",
+            "graze" => "Deals damage (equal to ability modifier) even when you miss your attack.",
+            "nick" => "Allows an additional attack as part of the Attack action (not a Bonus Action).",
+            "push" => "Pushes your target 10 feet away after a successful hit.",
+            "sap" => "Gives the target disadvantage on their next attack roll.",
+            "slow" => "Reduces the target's speed by 10 feet until the start of your next turn.",
+            "topple" => "Forces the target to make a CON save or fall prone.",
+            "vex" => "Gives you advantage on your next attack roll against the same target.",
+            _ => "No description available.",
+        };
 
         vec![
             Line::from(Span::styled(
@@ -128,9 +141,10 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             Line::from(""),
             Line::from(vec![
                 Span::styled("Mastery: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(mastery_tag, Style::default().fg(Color::Cyan)),
+                Span::styled(mastery_name, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             ]),
             Line::from(""),
+            Line::from(Span::styled(description, Style::default().fg(Color::White))),
         ]
     } else {
         vec![Line::from(Span::styled(
@@ -232,7 +246,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 app.builder.builder_pending_feature = None;
                 app.builder.feat_picker_search.clear();
                 app.builder.feat_picker_index = 0;
-                app.builder.step = CharacterCreationStep::Summary;
+                
+                if app.builder.skip_subclass {
+                    app.builder.step = CharacterCreationStep::Abilities;
+                } else {
+                    app.builder.step = CharacterCreationStep::Subclass;
+                }
+
                 app.status_msg = format!(
                     "Weapon masteries confirmed: {}",
                     app.builder.weapon_mastery_choices.join(", ")

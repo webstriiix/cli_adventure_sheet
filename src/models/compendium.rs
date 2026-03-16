@@ -201,6 +201,8 @@ pub struct Spell {
     pub entries_higher_lvl: Option<JsonValue>,
     pub ritual: Option<bool>,
     pub concentration: Option<bool>,
+    /// List of classes that can cast this spell (e.g. [{"name": "Paladin", ...}])
+    pub classes: Option<Vec<JsonValue>>,
 }
 
 // ── Feat ──
@@ -301,11 +303,14 @@ impl Feat {
 impl ClassFeature {
     /// Interpret this class feature's description text into a structured [`Feature`].
     pub fn interpret(&self) -> crate::models::features::Feature {
-        let text = match &self.entries {
+        let body = match &self.entries {
             Some(arr) => json_array_to_text(arr),
             None => String::new(),
         };
-        crate::models::features::interpret_feature(&text)
+        // Prepend name so the interpreter sees "Weapon Mastery. Your training..."
+        // This ensures features named "Weapon Mastery" are detected even if the text varies.
+        let combined = format!("{}. {}", self.name, body);
+        crate::models::features::interpret_feature(&combined)
     }
 }
 

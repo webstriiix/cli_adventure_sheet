@@ -239,8 +239,18 @@ impl App {
                 }
                 self.char_spells = spells_res;
                 self.char_inventory = inventory_res;
-                // char_classes is session-only (no GET endpoint); reset on sheet load
-                self.char_classes = Vec::new();
+                
+                // Initialize char_classes with the primary class and current level
+                let char_level = crate::utils::level_from_xp(c.experience_pts);
+                self.char_classes = vec![crate::models::character::CharacterClass {
+                    id: 0, // session-only
+                    character_id: c.id,
+                    class_id: c.class_id.unwrap_or(0),
+                    level: char_level,
+                    is_primary: true,
+                    subclass_id: None,
+                }];
+
                 self.multiclass_selected = 0;
                 self.conditions = Vec::new();
                 self.concentrating_on = None;

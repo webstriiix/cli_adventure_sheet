@@ -406,6 +406,11 @@ fn render_level_up_overlay(app: &mut App, frame: &mut Frame, area: Rect) {
                     .iter()
                     .map(|swf| {
                         let s = &swf.subclass;
+                        let source = if s.source_slug.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" [{}]", s.source_slug)
+                        };
                         ListItem::new(Line::from(vec![
                             Span::styled(
                                 format!("  {}", s.name),
@@ -413,6 +418,7 @@ fn render_level_up_overlay(app: &mut App, frame: &mut Frame, area: Rect) {
                                     .fg(Color::White)
                                     .add_modifier(Modifier::BOLD),
                             ),
+                            Span::styled(source, Style::default().fg(Color::Cyan)),
                             Span::styled(
                                 format!("  (unlocks lv {})", s.unlock_level),
                                 Style::default().fg(Color::DarkGray),

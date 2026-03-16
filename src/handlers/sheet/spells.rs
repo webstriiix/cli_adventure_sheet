@@ -18,6 +18,27 @@ pub fn handle_spells_key(app: &mut App, key: KeyEvent) {
     }
 
     match key.code {
+        // Level tab navigation
+        KeyCode::Tab => {
+            let max_level = app.char_spells.iter().filter_map(|cs| {
+                app.all_spells.iter().find(|s| s.id == cs.spell_id).map(|s| s.level)
+            }).max().unwrap_or(0);
+            let max_tab = std::cmp::min((max_level + 1) as usize + 1, 11);
+            if app.spell_level_tab_index + 1 < max_tab {
+                app.spell_level_tab_index += 1;
+            }
+            app.spell_level_filter = match app.spell_level_tab_index { 0 => None, n => Some(n as i32 - 1) };
+            app.selected_list_index = 0;
+            return;
+        }
+        KeyCode::BackTab => {
+            if app.spell_level_tab_index > 0 {
+                app.spell_level_tab_index -= 1;
+            }
+            app.spell_level_filter = match app.spell_level_tab_index { 0 => None, n => Some(n as i32 - 1) };
+            app.selected_list_index = 0;
+            return;
+        }
         KeyCode::Esc | KeyCode::Left => app.sidebar_focused = true,
         KeyCode::Char('q') => app.should_quit = true,
         KeyCode::Char('a') => {
@@ -69,10 +90,8 @@ pub fn handle_spells_key(app: &mut App, key: KeyEvent) {
         }
         // Concentrate on selected spell (z to toggle)
         KeyCode::Char('z') => {
-            let spell_id = app
-                .char_spells
-                .get(app.selected_list_index)
-                .map(|s| s.spell_id);
+            let filtered = app.char_spells_filtered();
+            let spell_id = filtered.get(app.selected_list_index).map(|s| s.spell_id);
             if let Some(sid) = spell_id {
                 if app.concentrating_on == Some(sid) {
                     app.concentrating_on = None;
@@ -90,7 +109,8 @@ pub fn handle_spells_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Down => {
-            if !app.char_spells.is_empty() && app.selected_list_index + 1 < app.char_spells.len() {
+            let filtered_count = app.char_spells_filtered().len();
+            if filtered_count > 0 && app.selected_list_index + 1 < filtered_count {
                 app.selected_list_index += 1;
             }
         }
@@ -115,14 +135,12 @@ pub fn persist_spell_slot(app: &mut App, slot_idx: usize) {
 }
 
 fn open_spell_detail_modal(app: &mut App) {
-    if app.char_spells.is_empty() {
+    let filtered = app.char_spells_filtered();
+    if filtered.is_empty() || app.selected_list_index >= filtered.len() {
         return;
     }
 
-    let char_spell = match app.char_spells.get(app.selected_list_index) {
-        Some(s) => s,
-        None => return,
-    };
+    let char_spell = filtered[app.selected_list_index];
 
     if let Some(spell) = app.all_spells.iter().find(|s| s.id == char_spell.spell_id) {
         let name = app.spell_name(spell.id);

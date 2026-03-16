@@ -220,6 +220,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                             app.builder.spellcasting_type = progression.clone();
                         }
                     }
+                    
+                    // Extra check: if backend has spellcasting_ability, it's a caster!
+                    if app.builder.spellcasting_type == "none" && selected_class.spellcasting_ability.is_some() {
+                        app.builder.spellcasting_type = "half".to_string(); // Assume half for Paladin/Ranger if unspecified
+                    }
 
                     // Look up subclasses to evaluate lock level.
                     // This data comes from the API when we need it, but for wizard routing
@@ -234,7 +239,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                         client.get_class_detail(&class_name, &source_slug).await
                     });
 
+                    let mut details_opt = None;
                     if let Ok(details) = res {
+                        details_opt = Some(details.clone());
                         if !details.subclasses.is_empty() {
                             if details.subclasses[0].subclass.unlock_level == 1 {
                                 app.builder.skip_subclass = false;
@@ -242,7 +249,27 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                         }
                     }
 
-                    if app.builder.skip_subclass {
+                    // Check for Weapon Mastery feature at level 1 (2024 Paladin/Fighter etc.)
+                    let mut weapon_mastery_feat = None;
+                    
+                    if let Some(details) = details_opt {
+                        for feat in details.features {
+                            if feat.level == 1 {
+                                let interpreted = feat.interpret();
+                                if let crate::models::features::Feature::WeaponMastery { choose } = interpreted {
+                                    weapon_mastery_feat = Some(choose);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(choose) = weapon_mastery_feat {
+                        app.builder.builder_pending_feature = Some(crate::models::features::Feature::WeaponMastery { choose });
+                        app.builder.step = CharacterCreationStep::FeatWeaponMastery;
+                        app.builder.feat_picker_index = 0;
+                        app.builder.feat_picker_search.clear();
+                    } else if app.builder.skip_subclass {
                         app.builder.step = CharacterCreationStep::Abilities;
                     } else {
                         app.builder.step = CharacterCreationStep::Subclass;
