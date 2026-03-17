@@ -23,6 +23,7 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
         FeaturesSubTab::ClassFeatures => render_class_features(app, frame, chunks[1]),
         FeaturesSubTab::SpeciesTraits => render_species_traits(app, frame, chunks[1]),
         FeaturesSubTab::Feats => render_feats(app, frame, chunks[1]),
+        FeaturesSubTab::Background => crate::ui::sheet::background_info::render(app, frame, chunks[1]),
     }
 }
 
@@ -32,6 +33,7 @@ fn render_nav_bar(app: &App, frame: &mut Frame, area: Rect) {
         (FeaturesSubTab::ClassFeatures, " Class Features "),
         (FeaturesSubTab::SpeciesTraits, " Species Traits "),
         (FeaturesSubTab::Feats, " Feats "),
+        (FeaturesSubTab::Background, " Background "),
     ];
 
     let mut line = Vec::new();
@@ -47,7 +49,7 @@ fn render_nav_bar(app: &App, frame: &mut Frame, area: Rect) {
             Style::default().fg(Color::Gray)
         };
         line.push(Span::styled(label, style));
-        if idx < 3 {
+        if idx < 4 {
             line.push(Span::raw(" | "));
         }
     }

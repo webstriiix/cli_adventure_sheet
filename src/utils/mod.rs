@@ -1,3 +1,5 @@
+pub mod storage;
+
 use crate::models::character::Character;
 
 pub const ABILITY_NAMES: [&str; 6] = ["STR", "DEX", "CON", "INT", "WIS", "CHA"];

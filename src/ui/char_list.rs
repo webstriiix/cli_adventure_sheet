@@ -95,6 +95,8 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         Span::raw(" new  "),
         Span::styled("R", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(" refresh  "),
+        Span::styled("L", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(" logout  "),
         Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(" quit"),
     ])];

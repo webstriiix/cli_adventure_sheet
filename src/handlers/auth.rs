@@ -88,6 +88,12 @@ pub fn submit_auth(app: &mut App) {
     match result {
         Ok(auth) => {
             app.status_msg = format!("Welcome, {}!", auth.user.username);
+            
+            // Save session for persistent login
+            app.storage.save_session(&crate::utils::storage::Session {
+                token: Some(auth.token.clone()),
+            });
+
             app.fetch_compendium_data();
             app.fetch_characters();
             app.screen = Screen::CharacterList;

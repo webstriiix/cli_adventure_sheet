@@ -107,6 +107,11 @@ impl App {
                     .entry(ability_keys[self.asi_ability_b].to_string())
                     .or_insert(0) += 1;
             }
+            AsiMode::PlusTwo => {
+                *increases
+                    .entry(ability_keys[self.asi_ability_a].to_string())
+                    .or_insert(0) += 2;
+            }
         }
 
         let req = AsiChoiceRequest {
@@ -135,6 +140,10 @@ impl App {
                         "+2 {} and +1 {}",
                         crate::utils::ABILITY_NAMES[self.asi_ability_a],
                         crate::utils::ABILITY_NAMES[self.asi_ability_b]
+                    ),
+                    AsiMode::PlusTwo => format!(
+                        "+2 {}",
+                        crate::utils::ABILITY_NAMES[self.asi_ability_a]
                     ),
                 };
                 self.active_character = Some(updated_char);

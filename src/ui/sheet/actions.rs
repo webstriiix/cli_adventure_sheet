@@ -19,28 +19,52 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
 
     render_nav_bar(app, frame, chunks[0]);
 
+    let local_actions = app.derive_actions();
+    
     if let Some(ref actions) = app.char_actions {
         if app.actions_sub_tab == ActionsSubTab::LimitedUse {
             let limited = actions.limited_use.clone();
             render_limited_use_list(app, &limited, frame, chunks[1]);
         } else {
             let list = match app.actions_sub_tab {
-                ActionsSubTab::All => &actions.all,
-                ActionsSubTab::Attack => &actions.attack,
-                ActionsSubTab::Action => &actions.action,
-                ActionsSubTab::BonusAction => &actions.bonus_action,
-                ActionsSubTab::Reaction => &actions.reaction,
-                ActionsSubTab::Other => &actions.other,
+                ActionsSubTab::All => {
+                    let mut all = actions.all.clone();
+                    // Avoid duplicates if Unarmed Strike is already there
+                    for la in local_actions {
+                        if !all.iter().any(|a| a.name == la.name) {
+                            all.push(la);
+                        }
+                    }
+                    all
+                }
+                ActionsSubTab::Attack => {
+                    let mut attack = actions.attack.clone();
+                    for la in local_actions {
+                         if !attack.iter().any(|a| a.name == la.name) {
+                            attack.push(la);
+                        }
+                    }
+                    attack
+                }
+                ActionsSubTab::Action => actions.action.clone(),
+                ActionsSubTab::BonusAction => actions.bonus_action.clone(),
+                ActionsSubTab::Reaction => actions.reaction.clone(),
+                ActionsSubTab::Other => actions.other.clone(),
                 ActionsSubTab::LimitedUse => unreachable!(),
             };
-            render_action_list(app, list, frame, chunks[1]);
+            render_action_list(app, &list, frame, chunks[1]);
         }
     } else {
-        let msg = "  Loading actions...";
-        frame.render_widget(
-            Paragraph::new(msg).style(Style::default().fg(Color::DarkGray)),
-            chunks[1],
-        );
+        // Fallback to only local actions if server data is missing
+        if app.actions_sub_tab == ActionsSubTab::Attack || app.actions_sub_tab == ActionsSubTab::All {
+            render_action_list(app, &local_actions, frame, chunks[1]);
+        } else {
+            let msg = "  No actions in this category (Offline).";
+            frame.render_widget(
+                Paragraph::new(msg).style(Style::default().fg(Color::DarkGray)),
+                chunks[1],
+            );
+        }
     }
 
     // --- Render Modal Overlay if open ---

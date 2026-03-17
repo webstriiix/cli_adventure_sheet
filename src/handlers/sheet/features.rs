@@ -12,6 +12,7 @@ pub fn handle_features_key(app: &mut App, key: KeyEvent) {
                 FeaturesSubTab::ClassFeatures => FeaturesSubTab::All,
                 FeaturesSubTab::SpeciesTraits => FeaturesSubTab::ClassFeatures,
                 FeaturesSubTab::Feats => FeaturesSubTab::SpeciesTraits,
+                FeaturesSubTab::Background => FeaturesSubTab::Feats,
             };
         }
         KeyCode::Right => {
@@ -20,7 +21,8 @@ pub fn handle_features_key(app: &mut App, key: KeyEvent) {
                 FeaturesSubTab::All => FeaturesSubTab::ClassFeatures,
                 FeaturesSubTab::ClassFeatures => FeaturesSubTab::SpeciesTraits,
                 FeaturesSubTab::SpeciesTraits => FeaturesSubTab::Feats,
-                FeaturesSubTab::Feats => FeaturesSubTab::Feats,
+                FeaturesSubTab::Feats => FeaturesSubTab::Background,
+                FeaturesSubTab::Background => FeaturesSubTab::Background,
             };
         }
         KeyCode::Char('q') => app.should_quit = true,
@@ -39,7 +41,6 @@ pub fn handle_features_key(app: &mut App, key: KeyEvent) {
             app.picker_mode = crate::models::app_state::PickerMode::WeaponMasteryPicker;
             app.picker_search.clear();
             app.picker_selected = 0;
-            // Need to fetch weapons logic later
         }
         KeyCode::Up => {
             if app.content_scroll > 0 {
