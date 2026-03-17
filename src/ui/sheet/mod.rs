@@ -433,7 +433,7 @@ fn render_weapon_mastery_choice(app: &mut App, frame: &mut Frame, area: Rect) {
         } else {
             Span::styled("[ ] ", Style::default().fg(Color::DarkGray))
         };
-        let mastery_text = weapon.mastery.unwrap_or_default().join(", ");
+        let mastery_text = weapon.mastery.clone().unwrap_or_default().join(", ");
 
         items.push(ListItem::new(Line::from(vec![
             checkbox,
@@ -534,6 +534,12 @@ fn render_asi_choice(app: &App, frame: &mut Frame, area: Rect) {
             lines.push(Line::from(format!(
                 "  +2 to: {} (Tab to change A)    +1 to: {} (Shift+Tab to change B)",
                 ABILITY_NAMES[app.asi_ability_a], ABILITY_NAMES[app.asi_ability_b]
+            )));
+        }
+        AsiMode::PlusTwo => {
+            lines.push(Line::from(format!(
+                "  +2 to: {} (Tab to change A)",
+                ABILITY_NAMES[app.asi_ability_a]
             )));
         }
     }

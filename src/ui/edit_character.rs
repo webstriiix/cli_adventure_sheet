@@ -385,7 +385,7 @@ fn render_level_up_overlay(app: &mut App, frame: &mut Frame, area: Rect) {
 
     frame.render_widget(Clear, popup_area);
 
-    let prompt = match &app.level_up_current {
+    let prompt: LevelUpPrompt = match &app.level_up_current {
         Some(p) => p.clone(),
         None => return,
     };
@@ -558,6 +558,15 @@ fn render_level_up_overlay(app: &mut App, frame: &mut Frame, area: Rect) {
                             Span::styled(
                                 format!("{:<3}", ABILITY_NAMES[app.asi_ability_b]),
                                 style_b,
+                            ),
+                        ]));
+                    }
+                    AsiMode::PlusTwo => {
+                        lines.push(Line::from(vec![
+                            Span::raw("  +2 to: "),
+                            Span::styled(
+                                format!("{:<3}", ABILITY_NAMES[app.asi_ability_a]),
+                                style_a,
                             ),
                         ]));
                     }

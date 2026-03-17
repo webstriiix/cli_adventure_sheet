@@ -1,0 +1,63 @@
+    pub fn save_notes(&mut self) {
+        let (character_id, active_class_id, final_notes) = {
+            let c = match &self.active_character {
+                Some(c) => c,
+                None => return,
+            };
+            
+            let existing_notes = c.notes.as_deref().unwrap_or("");
+            let skills_tag = if let Some(start) = existing_notes.find("[SKILLS:") {
+                let end = existing_notes[start..].find(']').map(|e| start + e + 1).unwrap_or(existing_notes.len());
+                Some(existing_notes[start..end].to_string())
+            } else {
+                None
+            };
+            
+            let notes = if let Some(tag) = skills_tag {
+                if self.notes_buffer.trim().is_empty() { tag } else { format!("{}\n{}", self.notes_buffer, tag) }
+            } else {
+                self.notes_buffer.clone()
+            };
+            
+            (c.id, self.active_class_id, notes)
+        };
+
+        // Update local state immediately for responsiveness
+        if let Some(active) = self.active_character.as_mut() {
+            active.notes = Some(final_notes.clone());
+        }
+
+        let update = crate::models::character::UpdateCharacterRequest {
+            notes: Some(final_notes),
+            ..crate::models::character::UpdateCharacterRequest::from_character(
+                self.active_character.as_ref().unwrap(),
+                active_class_id,
+            )
+        };
+
+        let rt = self.rt.clone();
+        match rt.block_on(self.client.update_character(character_id, &update)) {
+            Ok(updated) => {
+                self.active_character = Some(updated.clone());
+                // Cache updated version
+                let filename = format!("char_{}.json", character_id);
+                if let Some(mut cache) = self.storage.load_cache::<FullCharacterCache>(&filename) {
+                    cache.character = updated;
+                    self.storage.save_cache(&filename, &cache);
+                }
+                self.status_msg = "Notes saved.".into();
+            }
+            Err(e) => {
+                self.status_msg = format!("Offline: Saved notes locally. (Error: {e})");
+                // In offline mode, we still save to disk
+                let filename = format!("char_{}.json", character_id);
+                if let Some(mut cache) = self.storage.load_cache::<FullCharacterCache>(&filename) {
+                    if let Some(active) = &self.active_character {
+                        cache.character = active.clone();
+                        self.storage.save_cache(&filename, &cache);
+                    }
+                }
+            }
+        }
+    }
+}

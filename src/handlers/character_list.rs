@@ -59,6 +59,9 @@ pub fn handle_char_list_key(app: &mut App, key: KeyEvent) {
             app.fetch_characters();
             app.status_msg = "Refreshed".to_string();
         }
+        KeyCode::Char('l') | KeyCode::Char('L') => {
+            app.logout();
+        }
         _ => {}
     }
 }

@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 // ── Character ──
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Character {
     pub id: Uuid,
     pub user_id: Uuid,

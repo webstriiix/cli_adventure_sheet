@@ -164,6 +164,7 @@ version = "0.5.1"
 dependencies = [
  "chrono",
  "crossterm",
+ "directories",
  "ratatui",
  "reqwest",
  "serde",
@@ -357,6 +358,27 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
+]
+
+[[package]]
+name = "directories"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
+dependencies = [
+ "libc",
+ "option-ext",
+ "redox_users",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1014,6 +1036,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6800badb6cb2082ffd7b6a67e6125bb39f18782f793520caee8cb8846be06112"
 
 [[package]]
+name = "libredox"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1744e39d1d6a9948f4f388969627434e31128196de472883b39f148769bfe30a"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "line-clipping"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1249,6 +1280,12 @@ dependencies = [
  "pkg-config",
  "vcpkg",
 ]
+
+[[package]]
+name = "option-ext"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "ordered-float"
@@ -1656,6 +1693,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags 2.11.0",
+]
+
+[[package]]
+name = "redox_users"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
+dependencies = [
+ "getrandom 0.2.17",
+ "libredox",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

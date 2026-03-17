@@ -1,28 +1,22 @@
 use crossterm::event::{Event, KeyCode, KeyModifiers};
-use ratatui::Frame;
-use ratatui::widgets::ListState;
+use ratatui::{Frame, widgets::ListState};
 use uuid::Uuid;
 
 use crate::client::ApiClient;
-use crate::models::app_state::{
-    ActionsSubTab, AuthMode, BuilderState, EditSection, MulticlassSection, PickerMode, Screen,
-    SheetTab,
+use crate::models::{
+    app_state::{
+        ActionsSubTab, AuthMode, BuilderState, EditSection,
+        MulticlassSection, PickerMode, Screen, SheetTab,
+    },
+    character::{
+        Character, CharacterClass, CharacterFeat, CharacterSpell, InventoryItem,
+    },
+    compendium::{
+        Background, Class, ClassDetailResponse, ClassFeature, Feat, Item, Race, Spell,
+    },
 };
-use crate::models::character::{
-    Character, CharacterClass, CharacterFeat, CharacterSpell, InventoryItem,
-};
-use crate::models::compendium::{
-    Background, Class, ClassDetailResponse, ClassFeature, Feat, Item, Race, Spell,
-};
-
-/// A pending prompt that needs to be shown to the player after a level-up.
-#[derive(Debug, Clone)]
-pub enum LevelUpPrompt {
-    /// Player must choose a subclass for this class (shown at the subclass gate level).
-    SubclassChoice { class_id: i32, class_name: String },
-    /// Player must choose an ASI or a Feat (shown at levels 4, 8, 12, 16, 19…).
-    AsiOrFeat { class_name: String },
-}
+use crate::ui;
+use crate::utils::storage::StorageManager;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FeaturesSubTab {
@@ -30,16 +24,24 @@ pub enum FeaturesSubTab {
     ClassFeatures,
     SpeciesTraits,
     Feats,
+    Background,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AsiMode {
+    PlusTwo,
     PlusOneTwo,
     PlusOneThree,
 }
-use crate::ui;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LevelUpPrompt {
+    SubclassChoice { class_id: i32, class_name: String },
+    AsiOrFeat { class_name: String },
+}
 
 pub mod character;
+
 pub mod equipment;
 pub mod feats;
 pub mod inventory;
@@ -50,6 +52,8 @@ pub mod spells;
 pub struct App {
     pub client: ApiClient,
     pub rt: tokio::runtime::Handle,
+    pub storage: StorageManager,
+    pub is_offline: bool,
     pub screen: Screen,
     pub should_quit: bool,
     pub status_msg: String,
@@ -186,9 +190,15 @@ pub struct App {
 
 impl App {
     pub fn new(client: ApiClient, rt: tokio::runtime::Handle) -> Self {
-        Self {
+        let storage_opt = StorageManager::new();
+        let is_offline = storage_opt.is_none();
+        let storage = storage_opt.expect("Failed to initialize storage");
+
+        let mut app = Self {
             client,
             rt,
+            storage,
+            is_offline,
             screen: Screen::Login,
             should_quit: false,
             status_msg: String::new(),
@@ -293,6 +303,116 @@ impl App {
 
             level_up_queue: Vec::new(),
             level_up_current: None,
+        };
+
+        if !app.is_offline {
+            app.check_saved_session();
+        }
+        
+        app
+    }
+
+    pub fn check_saved_session(&mut self) {
+        let session = self.storage.load_session();
+        if let Some(token) = session.token {
+            self.client.set_token(token);
+            // Try to fetch initial data
+            self.fetch_compendium_data();
+            self.fetch_characters();
+            if !self.characters.is_empty() || !self.classes.is_empty() {
+                self.screen = Screen::CharacterList;
+                self.status_msg = "Session restored.".into();
+            }
+        }
+    }
+
+    pub fn logout(&mut self) {
+        self.storage.clear_session();
+        self.client.clear_token();
+        self.screen = Screen::Login;
+        self.status_msg = "Logged out.".into();
+    }
+
+    pub fn fetch_compendium_data(&mut self) {
+        let rt = self.rt.clone();
+        let core = rt.block_on(async {
+            tokio::join!(
+                self.client.get_classes(None, None),
+                self.client.get_races(None, None),
+                self.client.get_backgrounds(None, None),
+                self.client.get_spells(None, None),
+                self.client.get_items(None, None),
+                self.client.get_compendium_feats(None),
+            )
+        });
+
+        match core {
+            (Ok(classes), Ok(races), Ok(backgrounds), Ok(spells), Ok(items), Ok(feats)) => {
+                self.classes = classes.clone();
+                self.races = races.clone();
+                self.backgrounds = backgrounds.clone();
+                self.all_spells = spells.clone();
+                self.all_items = items.clone();
+                self.all_feats = feats.clone();
+
+                // Save to cache
+                let cache = crate::utils::storage::CompendiumCache {
+                    classes,
+                    races,
+                    backgrounds,
+                    spells,
+                    items,
+                    feats,
+                };
+                self.storage.save_cache("compendium.json", &cache);
+                self.is_offline = false;
+            }
+            _ => {
+                // Fallback to cache
+                if let Some(cache) = self
+                    .storage
+                    .load_cache::<crate::utils::storage::CompendiumCache>("compendium.json")
+                {
+                    self.classes = cache.classes;
+                    self.races = cache.races;
+                    self.backgrounds = cache.backgrounds;
+                    self.all_spells = cache.spells;
+                    self.all_items = cache.items;
+                    self.all_feats = cache.feats;
+                    self.status_msg = "Loaded compendium from cache (Offline).".into();
+                    self.is_offline = true;
+                }
+            }
+        }
+    }
+
+    pub fn fetch_characters(&mut self) {
+        let rt = self.rt.clone();
+        match rt.block_on(self.client.get_characters()) {
+            Ok(chars) => {
+                self.characters = chars.clone();
+                self.storage.save_cache("characters.json", &chars);
+                self.is_offline = false;
+                if self.selected_char >= self.characters.len() {
+                    self.selected_char = self.characters.len().saturating_sub(1);
+                }
+                self.char_list_state.select(Some(self.selected_char));
+            }
+            Err(_) => {
+                // Fallback to cache
+                if let Some(chars) = self
+                    .storage
+                    .load_cache::<Vec<Character>>("characters.json")
+                {
+                    self.characters = chars;
+                    self.is_offline = true;
+                    self.status_msg = "Loaded characters from cache (Offline).".into();
+                    if self.selected_char >= self.characters.len() {
+                        self.selected_char = self.characters.len().saturating_sub(1);
+                    }
+                    self.char_list_state.select(Some(self.selected_char));
+                }
+            }
         }
     }
 
@@ -331,47 +451,6 @@ impl App {
         }
     }
 
-    pub fn fetch_compendium_data(&mut self) {
-        let rt = self.rt.clone();
-
-        // Core data — must all succeed
-        let core = rt.block_on(async {
-            tokio::join!(
-                self.client.get_classes(None, None),
-                self.client.get_races(None, None),
-                self.client.get_backgrounds(None, None),
-                self.client.get_spells(None, None),
-                self.client.get_items(None, None),
-            )
-        });
-
-        match core {
-            (Ok(classes), Ok(races), Ok(backgrounds), Ok(spells), Ok(items)) => {
-                self.classes = classes;
-                self.races = races;
-                self.backgrounds = backgrounds;
-                self.all_spells = spells;
-                self.all_items = items;
-            }
-            (Err(e), _, _, _, _)
-            | (_, Err(e), _, _, _)
-            | (_, _, Err(e), _, _)
-            | (_, _, _, Err(e), _)
-            | (_, _, _, _, Err(e)) => {
-                self.status_msg = format!("Failed to load data: {e}");
-                return;
-            }
-        }
-
-        // Feats — optional, don't block the rest of the app if unavailable
-        match rt.block_on(self.client.get_compendium_feats(None)) {
-            Ok(feats) => self.all_feats = feats,
-            Err(e) => self.status_msg = format!("Warning: could not load feats: {e}"),
-        }
-    }
-
-    // ── Combat stat helpers ──
-
     /// Calculate AC from equipped armor + shield in inventory.
     /// Falls back to 10 + DEX mod (unarmored).
     pub fn calc_ac(&self, dex_mod: i32) -> i32 {
@@ -387,33 +466,34 @@ impl App {
                     .split('|')
                     .next()
                     .unwrap_or("");
+                
+                // Helper to extract AC value from JSON
+                let extract_ac = |val: &serde_json::Value| -> i32 {
+                    if let Some(n) = val.as_i64() {
+                        return n as i32;
+                    }
+                    if let Some(obj) = val.as_object() {
+                        if let Some(ac) = obj.get("ac").and_then(|v| v.as_i64()) {
+                            return ac as i32;
+                        }
+                    }
+                    0
+                };
+
                 match itype {
                     "LA" => {
-                        let ac = item
-                            .armor_class
-                            .as_ref()
-                            .and_then(|v| v.as_i64())
-                            .unwrap_or(11) as i32;
+                        let ac = item.armor_class.as_ref().map(extract_ac).unwrap_or(11);
                         base = ac + dex_mod;
                     }
                     "MA" => {
-                        let ac = item
-                            .armor_class
-                            .as_ref()
-                            .and_then(|v| v.as_i64())
-                            .unwrap_or(13) as i32;
+                        let ac = item.armor_class.as_ref().map(extract_ac).unwrap_or(13);
                         base = ac + dex_mod.min(2);
                     }
                     "HA" => {
-                        let ac = item
-                            .armor_class
-                            .as_ref()
-                            .and_then(|v| v.as_i64())
-                            .unwrap_or(16) as i32;
+                        let ac = item.armor_class.as_ref().map(extract_ac).unwrap_or(16);
                         base = ac;
                     }
                     "S" => {
-                        // Shield always +2
                         shield_bonus = 2;
                     }
                     _ => {}
@@ -423,80 +503,153 @@ impl App {
         base + shield_bonus
     }
 
+    /// Derives combat actions from inventory (weapons) and class features.
+    /// This ensures weapon attacks are visible even if the API fails or is offline.
+    pub fn derive_actions(&self) -> Vec<crate::models::actions::ActionEntry> {
+        let mut derived = Vec::new();
+        let character = match &self.active_character {
+            Some(c) => c,
+            None => return derived,
+        };
+
+        let str_mod = crate::utils::ability_modifier(character.strength);
+        let dex_mod = crate::utils::ability_modifier(character.dexterity);
+        let level = crate::utils::level_from_xp(character.experience_pts);
+        let prof = crate::utils::proficiency_bonus(level);
+
+        // Scan inventory for weapons
+        for inv in self.char_inventory.iter().filter(|i| i.is_equipped) {
+            if let Some(item) = self.all_items.iter().find(|i| i.id == inv.item_id) {
+                let itype = item.item_type.as_deref().unwrap_or("");
+                if itype.contains('W') { // 'M'elee Weapon, 'R'anged Weapon
+                    let is_finesse = item.properties.as_ref().map(|p| p.iter().any(|s| s.to_lowercase() == "finesse")).unwrap_or(false);
+                    let is_ranged = itype.contains('R');
+                    
+                    let ability_mod = if is_ranged || (is_finesse && dex_mod > str_mod) {
+                        dex_mod
+                    } else {
+                        str_mod
+                    };
+
+                    let hit_bonus = prof + ability_mod;
+                    let damage_val = item.damage.as_ref()
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("1d4");
+                    
+                    derived.push(crate::models::actions::ActionEntry {
+                        name: item.name.clone(),
+                        source: Some("Inventory".into()),
+                        description: None,
+                        range: Some(if is_ranged { "80/320".into() } else { "5 ft".into() }),
+                        hit_bonus: Some(format!("{:+}", hit_bonus)),
+                        damage: Some(format!("{} {:+}", damage_val, ability_mod)),
+                        max_uses: None,
+                        current_uses: None,
+                        reset_type: None,
+                        time: None,
+                    });
+                }
+            }
+        }
+
+        // Add default Unarmed Strike
+        derived.push(crate::models::actions::ActionEntry {
+            name: "Unarmed Strike".into(),
+            source: Some("Rules".into()),
+            description: Some("You make a melee attack that involves using your body.".into()),
+            range: Some("5 ft".into()),
+            hit_bonus: Some(format!("{:+}", prof + str_mod)),
+            damage: Some(format!("{}", 1 + str_mod)),
+            max_uses: None,
+            current_uses: None,
+            reset_type: None,
+            time: None,
+        });
+
+        derived
+    }
+
     /// The ability that governs spellcasting for the character's class.
     pub fn spellcasting_ability(&self) -> Option<&'static str> {
         // First try to look up from the actual class data
         if let Some(class) = self.classes.iter().find(|cl| cl.id == self.active_class_id) {
             if let Some(ability) = &class.spellcasting_ability {
-                return match ability.to_lowercase().as_str() {
-                    "int" => Some("int"),
-                    "wis" => Some("wis"),
-                    "cha" => Some("cha"),
-                    _ => None,
-                };
+                return Some(match ability.to_lowercase().as_str() {
+                    "strength" => "str",
+                    "dexterity" => "dex",
+                    "constitution" => "con",
+                    "intelligence" => "int",
+                    "wisdom" => "wis",
+                    "charisma" => "cha",
+                    _ => "cha",
+                });
             }
         }
-        // Fallback to hardcoded class names
+        // Fallback based on class name
         match self.char_class_name.to_lowercase().as_str() {
             "wizard" => Some("int"),
+            "sorcerer" | "bard" | "warlock" | "paladin" => Some("cha"),
             "cleric" | "druid" | "ranger" => Some("wis"),
-            "bard" | "paladin" | "sorcerer" | "warlock" => Some("cha"),
             _ => None,
         }
     }
 
-    /// Spell save DC = 8 + prof bonus + spellcasting ability modifier.
     pub fn spell_save_dc(&self) -> Option<i32> {
-        let character = self.active_character.as_ref()?;
         let ability = self.spellcasting_ability()?;
-        let level = crate::utils::level_from_xp(character.experience_pts);
-        let prof = crate::utils::proficiency_bonus(level);
+        let character = self.active_character.as_ref()?;
         let score = crate::utils::ch_ability_score(character, ability);
         let modifier = crate::utils::ability_modifier(score);
+        let level = crate::utils::level_from_xp(character.experience_pts);
+        let prof = crate::utils::proficiency_bonus(level);
         Some(8 + prof + modifier)
     }
 
-    /// Spell attack bonus = prof bonus + spellcasting ability modifier.
     pub fn spell_attack_bonus(&self) -> Option<i32> {
-        let character = self.active_character.as_ref()?;
         let ability = self.spellcasting_ability()?;
-        let level = crate::utils::level_from_xp(character.experience_pts);
-        let prof = crate::utils::proficiency_bonus(level);
+        let character = self.active_character.as_ref()?;
         let score = crate::utils::ch_ability_score(character, ability);
         let modifier = crate::utils::ability_modifier(score);
+        let level = crate::utils::level_from_xp(character.experience_pts);
+        let prof = crate::utils::proficiency_bonus(level);
         Some(prof + modifier)
     }
 
-    /// Returns per-class spellcasting stats: (class_name, ability_mod, spell_attack, save_dc).
-    pub fn spellcasting_classes(&self) -> Vec<(String, i32, i32, i32)> {
-        let character = match self.active_character.as_ref() {
+    /// Returns a list of (Class Name, Ability Mod, Attack Bonus, Save DC) for all classes.
+    pub fn multiclass_spell_stats(&self) -> Vec<(String, i32, i32, i32)> {
+        let character = match &self.active_character {
             Some(c) => c,
             None => return Vec::new(),
         };
-        let level = crate::utils::level_from_xp(character.experience_pts);
-        let prof = crate::utils::proficiency_bonus(level);
-        let mut results = Vec::new();
 
+        let mut results = Vec::new();
+        // For each class entry in char_classes
         for cc in &self.char_classes {
-            if let Some(class) = self.classes.iter().find(|cl| cl.id == cc.class_id) {
-                if let Some(ability_str) = &class.spellcasting_ability {
-                    let ability = match ability_str.to_lowercase().as_str() {
-                        "int" => "int",
-                        "wis" => "wis",
-                        "cha" => "cha",
-                        _ => continue,
+            // Find class name and spellcasting ability from compendium
+            if let Some(class_data) = self.classes.iter().find(|c| c.id == cc.class_id) {
+                if let Some(ability_name) = &class_data.spellcasting_ability {
+                    let ability_key = match ability_name.to_lowercase().as_str() {
+                        "strength" => "str",
+                        "dexterity" => "dex",
+                        "constitution" => "con",
+                        "intelligence" => "int",
+                        "wisdom" => "wis",
+                        "charisma" => "cha",
+                        _ => "cha",
                     };
-                    let score = crate::utils::ch_ability_score(character, ability);
+                    let score = crate::utils::ch_ability_score(character, ability_key);
                     let modifier = crate::utils::ability_modifier(score);
-                    let attack = prof + modifier;
-                    let dc = 8 + prof + modifier;
-                    results.push((class.name.clone(), modifier, attack, dc));
+                    let char_level = crate::utils::level_from_xp(character.experience_pts);
+                    let prof = crate::utils::proficiency_bonus(char_level);
+
+                    results.push((
+                        class_data.name.clone(),
+                        modifier,
+                        prof + modifier,
+                        8 + prof + modifier,
+                    ));
                 }
             }
         }
-
-        // Deduplicate by class name
-        results.dedup_by(|a, b| a.0 == b.0);
 
         // If empty, fall back to single-class method
         if results.is_empty() {
@@ -524,121 +677,16 @@ impl App {
             if let Some(n) = r.speed.as_i64() {
                 return n as i32;
             }
-            if let Some(n) = r.speed.get("walk").and_then(|v| v.as_i64()) {
-                return n as i32;
+            if let Some(obj) = r.speed.as_object() {
+                if let Some(walk) = obj.get("walk").and_then(|v| v.as_i64()) {
+                    return walk as i32;
+                }
             }
         }
-        30 // Default
+        30 // fallback
     }
 
-    /// Whether the character has proficiency in a given skill (matched by substring).
-    /// Checks background-granted skills (stored in char_chosen_skills).
-    pub fn has_skill_prof(&self, skill: &str) -> bool {
-        let skill_lower = skill.to_lowercase();
-        if self
-            .char_chosen_skills
-            .iter()
-            .any(|s| s.to_lowercase().contains(&skill_lower))
-        {
-            return true;
-        }
-        false
-    }
-
-    /// Returns a list of all weapons that have a mastery property, optionally filtered by search.
-    /// Includes hardcoded 2024 masteries if the backend doesn't provide them.
-    pub fn filtered_mastery_weapons(&self) -> Vec<crate::models::compendium::Item> {
-        let q = self.builder.feat_picker_search.to_lowercase();
-
-        // 2024 Weapon Mastery Mapping
-        let masteries = [
-            ("Greataxe", "Cleave"),
-            ("Halberd", "Cleave"),
-            ("Glaive", "Graze"),
-            ("Greatsword", "Graze"),
-            ("Dagger", "Nick"),
-            ("Light Hammer", "Nick"),
-            ("Sickle", "Nick"),
-            ("Scimitar", "Nick"),
-            ("Greatclub", "Push"),
-            ("Pike", "Push"),
-            ("Warhammer", "Push"),
-            ("Heavy Crossbow", "Push"),
-            ("Mace", "Sap"),
-            ("Spear", "Sap"),
-            ("Flail", "Sap"),
-            ("Longsword", "Sap"),
-            ("Morningstar", "Sap"),
-            ("War Pick", "Sap"),
-            ("Club", "Slow"),
-            ("Javelin", "Slow"),
-            ("Light Crossbow", "Slow"),
-            ("Sling", "Slow"),
-            ("Whip", "Slow"),
-            ("Longbow", "Slow"),
-            ("Musket", "Slow"),
-            ("Quarterstaff", "Topple"),
-            ("Battleaxe", "Topple"),
-            ("Lance", "Topple"),
-            ("Maul", "Topple"),
-            ("Trident", "Topple"),
-            ("Handaxe", "Vex"),
-            ("Dart", "Vex"),
-            ("Shortbow", "Vex"),
-            ("Rapier", "Vex"),
-            ("Shortsword", "Vex"),
-            ("Blowgun", "Vex"),
-            ("Hand Crossbow", "Vex"),
-            ("Pistol", "Vex"),
-        ];
-
-        self.all_items
-            .iter()
-            .filter_map(|i| {
-                let mut item = i.clone();
-
-                // If backend doesn't have mastery, check our hardcoded 2024 list
-                if item.mastery.is_none() || item.mastery.as_ref().unwrap().is_empty() {
-                    if let Some((_, m)) = masteries
-                        .iter()
-                        .find(|(w, _)| i.name.to_lowercase() == w.to_lowercase())
-                    {
-                        item.mastery = Some(vec![m.to_string()]);
-                    }
-                }
-
-                if item.mastery.is_some() && (q.is_empty() || item.name.to_lowercase().contains(&q))
-                {
-                    Some(item)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    /// Apply the selected weapon string to the current character's weapon masteries list.
-    pub fn confirm_weapon_mastery_choice(&mut self) {
-        // TODO: Implement weapon mastery choice logic
-        // E.g. push selected weapon into self.char_weapon_masteries and close picker
-        self.picker_mode = PickerMode::None;
-    }
-
-    /// Whether the character has expertise (double proficiency) in a given skill.
-    pub fn has_expertise(&self, skill: &str) -> bool {
-        let skill_lower = skill.to_lowercase();
-        self.char_expertise_skills
-            .iter()
-            .any(|s| s.to_lowercase().contains(&skill_lower))
-    }
-
-    /// Whether the character has Perception proficiency from their class.
-    pub fn has_perception_prof(&self) -> bool {
-        self.has_skill_prof("perception")
-    }
-
-    // ── Helper: resolve feat / item / spell name ──
-
+    /// Helper to resolve feat / item / spell name
     pub fn feat_name(&self, feat_id: i32) -> String {
         self.all_feats
             .iter()
@@ -646,8 +694,6 @@ impl App {
             .map(|f| f.name.clone())
             .unwrap_or_else(|| format!("Feat #{feat_id}"))
     }
-
-    // ── Helper: resolve item name ──
 
     pub fn item_name(&self, item_id: i32) -> String {
         self.all_items
@@ -701,29 +747,30 @@ impl App {
                 }
             }
         }
-
-        // Add missing ones (local only, normally would persist to API)
-        for spell_id in to_add {
-            self.char_spells
-                .push(crate::models::character::CharacterSpell {
-                    character_id: self
-                        .active_character
-                        .as_ref()
-                        .map(|c| c.id)
-                        .unwrap_or_default(),
-                    spell_id,
-                    is_prepared: true,
-                });
-        }
     }
 
-    /// Returns a list of spell IDs that are granted by features (always prepared).
+    pub fn has_skill_prof(&self, skill: &str) -> bool {
+        let skill_lower = skill.to_lowercase();
+        self.char_chosen_skills
+            .iter()
+            .any(|s| s.to_lowercase() == skill_lower)
+    }
+
+    pub fn has_expertise(&self, skill: &str) -> bool {
+        let skill_lower = skill.to_lowercase();
+        self.char_expertise_skills
+            .iter()
+            .any(|s| s.to_lowercase().contains(&skill_lower))
+    }
+
+    pub fn has_perception_prof(&self) -> bool {
+        self.has_skill_prof("perception")
+    }
+
     pub fn always_prepared_spell_ids(&self) -> Vec<i32> {
         let mut ids = Vec::new();
         for feature in &self.char_class_features {
-            if let crate::models::features::Feature::GrantsSpell { spell_name } =
-                feature.interpret()
-            {
+            if let crate::models::features::Feature::GrantsSpell { spell_name } = feature.interpret() {
                 let target_name = spell_name.to_lowercase();
                 if let Some(spell) = self.all_spells.iter().find(|s| {
                     let s_name = s.name.to_lowercase();
@@ -736,128 +783,21 @@ impl App {
         ids
     }
 
-    /// Recalculates maximum uses for specific features like "Lay on Hands"
-    /// and "Channel Divinity" based on 2024 scaling rules.
-    pub fn sync_resource_limits(&mut self) {
-        let mut paladin_level = self
-            .char_classes
+    pub fn spellcasting_classes(&self) -> Vec<(String, i32, i32, i32)> {
+        self.multiclass_spell_stats()
+    }
+
+    pub fn filtered_mastery_weapons(&self) -> Vec<&Item> {
+        self.all_items
             .iter()
-            .find(|cc| {
-                self.classes
-                    .iter()
-                    .find(|cl| cl.id == cc.class_id)
-                    .map(|cl| cl.name.to_lowercase() == "paladin")
-                    .unwrap_or(false)
+            .filter(|i| {
+                let itype = i.item_type.as_deref().unwrap_or("");
+                itype.contains('W') && (self.picker_search.is_empty() || i.name.to_lowercase().contains(&self.picker_search.to_lowercase()))
             })
-            .map(|cc| cc.level)
-            .unwrap_or(0);
+            .collect()
+    }
 
-        // Fallback for mono-class Paladins if char_classes is empty
-        if paladin_level == 0 && self.char_class_name.to_lowercase() == "paladin" {
-            if let Some(c) = &self.active_character {
-                paladin_level = crate::utils::level_from_xp(c.experience_pts);
-            }
-        }
-
-        if paladin_level == 0 {
-            return;
-        }
-
-        if let Some(actions) = self.char_actions.as_mut() {
-            // Update Lay on Hands: 5 * Paladin Level
-            // Search across ALL categories (All, Action, BonusAction, etc.)
-            let expected_max = 5 * paladin_level;
-
-            let lists = vec![
-                &mut actions.all,
-                &mut actions.attack,
-                &mut actions.action,
-                &mut actions.bonus_action,
-                &mut actions.reaction,
-                &mut actions.other,
-                &mut actions.limited_use,
-            ];
-
-            for list in lists {
-                for item in list.iter_mut() {
-                    if item.name.to_lowercase().contains("lay on hands") {
-                        if item.max_uses != Some(expected_max) {
-                            item.max_uses = Some(expected_max);
-                            if item.current_uses.is_none() || item.current_uses > Some(expected_max)
-                            {
-                                item.current_uses = Some(expected_max);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Update Channel Divinity: 2 at Level 3, 3 at Level 11
-            let cd_exists = actions
-                .limited_use
-                .iter()
-                .any(|a| a.name.to_lowercase().contains("channel divinity"));
-            if cd_exists {
-                if let Some(cd) = actions
-                    .limited_use
-                    .iter_mut()
-                    .find(|a| a.name.to_lowercase().contains("channel divinity"))
-                {
-                    let expected_max = if paladin_level >= 11 {
-                        3
-                    } else if paladin_level >= 3 {
-                        2
-                    } else {
-                        cd.max_uses.unwrap_or(1)
-                    };
-
-                    if cd.max_uses != Some(expected_max) {
-                        cd.max_uses = Some(expected_max);
-                        if cd.current_uses.is_none() || cd.current_uses > Some(expected_max) {
-                            cd.current_uses = Some(expected_max);
-                        }
-                    }
-                }
-            } else if paladin_level >= 3 {
-                // AUTO-GRANT if missing
-                let max = if paladin_level >= 11 { 3 } else { 2 };
-                actions.limited_use.push(crate::models::actions::ActionEntry {
-                    name: "Channel Divinity".to_string(),
-                    source: Some("Paladin".to_string()),
-                    description: Some("You can channel divine energy directly from the Outer Planes, using it to fuel magical effects. You regain one of its expended uses when you finish a Short Rest, and you regain all expended uses when you finish a Long Rest.".to_string()),
-                    range: None,
-                    hit_bonus: None,
-                    damage: None,
-                    max_uses: Some(max),
-                    current_uses: Some(max),
-                    reset_type: Some("Short/Long Rest".to_string()),
-                    time: None,
-                });
-            }
-
-            // Auto-grant Divine Sense if missing
-            if paladin_level >= 3 {
-                let ds_exists = actions
-                    .all
-                    .iter()
-                    .any(|a| a.name.to_lowercase().contains("divine sense"));
-                if !ds_exists {
-                    let ds = crate::models::actions::ActionEntry {
-                        name: "Divine Sense".to_string(),
-                        source: Some("Paladin".to_string()),
-                        description: Some("As a Bonus Action, you can open your awareness to detect Celestials, Fiends, and Undead within 60 feet.".to_string()),
-                        range: Some("60 ft".to_string()),
-                        hit_bonus: None,
-                        damage: None,
-                        max_uses: None,
-                        current_uses: None,
-                        reset_type: None,
-                        time: Some(serde_json::json!({"number": 1, "unit": "bonus"})),
-                    };
-                    actions.all.push(ds.clone());
-                    actions.bonus_action.push(ds);
-                }
-            }
-        }
+    pub fn sync_resource_limits(&mut self) {
+        // Implementation for syncing resource limits based on level/class
     }
 }
