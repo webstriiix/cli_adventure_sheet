@@ -133,7 +133,7 @@ impl App {
     pub fn filtered_spells(&self) -> Vec<&Spell> {
         let search = self.picker_search.to_lowercase();
         let always_prepared = self.always_prepared_spell_ids();
-        
+
         self.all_spells
             .iter()
             .filter(|s| {

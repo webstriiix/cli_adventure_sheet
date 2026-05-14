@@ -1,7 +1,7 @@
+use crate::App;
 use crate::models::app_state::PickerMode;
 use crate::models::character::{AddInventoryRequest, UpdateInventoryRequest};
 use crate::models::compendium::Item;
-use crate::App;
 
 impl App {
     pub fn remove_selected_inventory_item(&mut self) {

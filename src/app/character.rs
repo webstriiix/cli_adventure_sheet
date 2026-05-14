@@ -75,23 +75,30 @@ impl App {
             Ok(c) => {
                 // Find class source slug for detail fetch
                 let first_class_id = c.class_id.unwrap_or(1);
-                let (class_name, class_source) = self.classes.iter()
+                let (class_name, class_source) = self
+                    .classes
+                    .iter()
                     .find(|cl| cl.id == first_class_id)
                     .map(|cl| (cl.name.clone(), cl.source_slug.clone()))
                     .unwrap_or_else(|| ("Unknown".into(), "PHB".into()));
 
+                let level = crate::utils::level_from_xp(c.experience_pts);
+
                 // Parallel fetch all related data
-                let (feats, spells, inventory, slots, hit_dice, detail, actions) = rt.block_on(async {
-                    tokio::join!(
-                        self.client.get_feats(c.id),
-                        self.client.get_character_spells(c.id),
-                        self.client.get_inventory(c.id),
-                        self.client.get_spell_slots(c.id),
-                        self.client.get_hit_dice(c.id),
-                        self.client.get_class_detail(&class_name, &class_source),
-                        self.client.get_character_actions(c.id)
-                    )
-                });
+                let (feats, spells, inventory, slots, hit_dice, detail, actions, resources, profs) =
+                    rt.block_on(async {
+                        tokio::join!(
+                            self.client.get_feats(c.id),
+                            self.client.get_character_spells(c.id),
+                            self.client.get_inventory(c.id),
+                            self.client.get_spell_slots(c.id),
+                            self.client.get_hit_dice(c.id),
+                            self.client.get_class_detail(&class_name, &class_source),
+                            self.client.get_character_actions(c.id),
+                            self.client.get_class_resources(&class_name, &class_source, level),
+                            self.client.get_proficiencies(c.id)
+                        )
+                    });
 
                 let cache = FullCharacterCache {
                     character: c.clone(),
@@ -100,8 +107,10 @@ impl App {
                     inventory: inventory.unwrap_or_default(),
                     spell_slots: slots.unwrap_or_default(),
                     hit_dice: hit_dice.unwrap_or_default(),
+                    proficiencies: profs.unwrap_or_default(),
                     class_detail: detail.ok(),
                     actions: actions.ok(),
+                    resources: resources.ok(),
                 };
 
                 // Save to local cache for offline use
@@ -136,32 +145,51 @@ impl App {
         self.char_feats = cache.feats;
         self.char_spells = cache.spells;
         self.char_inventory = cache.inventory;
+        self.char_proficiencies = cache.proficiencies;
         self.char_actions = cache.actions;
+        self.char_resources = cache.resources;
         self.class_detail = cache.class_detail;
 
         // Names
-        self.char_race_name = self.races.iter()
+        self.char_race_name = self
+            .races
+            .iter()
             .find(|r| Some(r.id) == c.race_id)
             .map(|r| r.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
         let active_class = self.classes.iter().find(|cl| cl.id == first_class_id);
-        self.char_class_name = active_class.map(|cl| cl.name.clone()).unwrap_or_else(|| "Unknown".into());
-        self.char_caster_progression = active_class.and_then(|cl| cl.caster_progression.clone()).unwrap_or_default();
+        self.char_class_name = active_class
+            .map(|cl| cl.name.clone())
+            .unwrap_or_else(|| "Unknown".into());
+        self.char_caster_progression = active_class
+            .and_then(|cl| cl.caster_progression.clone())
+            .unwrap_or_default();
 
-        self.char_bg_name = self.backgrounds.iter()
+        self.char_bg_name = self
+            .backgrounds
+            .iter()
             .find(|b| Some(b.id) == c.background_id)
             .map(|b| b.name.clone())
             .unwrap_or_else(|| "None".into());
 
         // Skills
         let mut skills = Vec::new();
-        if let Some(bg) = self.backgrounds.iter().find(|b| Some(b.id) == c.background_id) {
+        if let Some(bg) = self
+            .backgrounds
+            .iter()
+            .find(|b| Some(b.id) == c.background_id)
+        {
             if let Some(prof) = &bg.skill_proficiencies {
                 for entry in prof {
-                    if let Some(s) = entry.as_str() { skills.push(s.to_lowercase()); }
-                    else if let Some(obj) = entry.as_object() {
-                        for (key, val) in obj { if val.as_bool().unwrap_or(false) { skills.push(key.to_lowercase()); } }
+                    if let Some(s) = entry.as_str() {
+                        skills.push(s.to_lowercase());
+                    } else if let Some(obj) = entry.as_object() {
+                        for (key, val) in obj {
+                            if val.as_bool().unwrap_or(false) {
+                                skills.push(key.to_lowercase());
+                            }
+                        }
                     }
                 }
             }
@@ -173,7 +201,9 @@ impl App {
                 if let Some(end) = after.find(']') {
                     for s in after[..end].split(',') {
                         let trimmed = s.trim().to_lowercase();
-                        if !trimmed.is_empty() && !skills.contains(&trimmed) { skills.push(trimmed); }
+                        if !trimmed.is_empty() && !skills.contains(&trimmed) {
+                            skills.push(trimmed);
+                        }
                     }
                 }
             }
@@ -181,8 +211,16 @@ impl App {
         self.char_chosen_skills = skills;
 
         // Expertise
-        self.char_expertise_skills = self.char_feats.iter()
-            .filter(|cf| self.all_feats.iter().find(|f| f.id == cf.feat_id).map(|f| f.name.to_lowercase().contains("expertise")).unwrap_or(false))
+        self.char_expertise_skills = self
+            .char_feats
+            .iter()
+            .filter(|cf| {
+                self.all_feats
+                    .iter()
+                    .find(|f| f.id == cf.feat_id)
+                    .map(|f| f.name.to_lowercase().contains("expertise"))
+                    .unwrap_or(false)
+            })
             .filter_map(|cf| cf.chosen_ability.as_ref())
             .flat_map(|s| s.split(',').map(|p| p.trim().to_lowercase().to_string()))
             .filter(|s| !s.is_empty())
@@ -190,41 +228,82 @@ impl App {
 
         // Subclass
         self.char_subclass_name = if let Some(detail) = &self.class_detail {
-            let feat_names: Vec<String> = self.char_feats.iter()
+            let feat_names: Vec<String> = self
+                .char_feats
+                .iter()
                 .filter(|cf| cf.source_type.to_lowercase().contains("subclass"))
-                .filter_map(|cf| self.all_feats.iter().find(|f| f.id == cf.feat_id).map(|f| f.name.clone()))
+                .filter_map(|cf| {
+                    self.all_feats
+                        .iter()
+                        .find(|f| f.id == cf.feat_id)
+                        .map(|f| f.name.clone())
+                })
                 .collect();
 
-            detail.subclasses.iter().find(|swf| {
-                swf.features.iter().any(|sf| {
-                    feat_names.iter().any(|fn_| fn_.to_lowercase().contains(&sf.name.to_lowercase()) || sf.name.to_lowercase().contains(&fn_.to_lowercase()))
+            detail
+                .subclasses
+                .iter()
+                .find(|swf| {
+                    swf.features.iter().any(|sf| {
+                        feat_names.iter().any(|fn_| {
+                            fn_.to_lowercase().contains(&sf.name.to_lowercase())
+                                || sf.name.to_lowercase().contains(&fn_.to_lowercase())
+                        })
+                    })
                 })
-            }).map(|swf| swf.subclass.name.clone()).unwrap_or_default()
+                .map(|swf| swf.subclass.name.clone())
+                .unwrap_or_default()
         } else {
             String::new()
         };
 
         // Features & Traits
         let char_level = crate::utils::level_from_xp(c.experience_pts);
-        self.char_class_features = self.class_detail.as_ref()
-            .map(|d| d.features.iter().filter(|f| f.level <= char_level && !f.is_subclass_gate).cloned().collect())
+        self.char_class_features = self
+            .class_detail
+            .as_ref()
+            .map(|d| {
+                d.features
+                    .iter()
+                    .filter(|f| f.level <= char_level && !f.is_subclass_gate)
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
 
-        self.char_race_traits = if let Some(race) = self.races.iter().find(|r| Some(r.id) == c.race_id) {
-            let mut traits = Vec::new();
-            if let Some(entries) = &race.entries {
-                for entry in entries {
-                    if let Some(obj) = entry.as_object() {
-                        let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let desc = obj.get("entries").and_then(|v| v.as_array()).map(|arr| {
-                            arr.iter().filter_map(|e| e.as_str().map(str::to_string)).collect::<Vec<_>>().join("\n")
-                        }).unwrap_or_default();
-                        if !name.is_empty() { traits.push((name, desc)); }
-                    } else if let Some(s) = entry.as_str() { traits.push((s.to_string(), String::new())); }
+        self.char_race_traits =
+            if let Some(race) = self.races.iter().find(|r| Some(r.id) == c.race_id) {
+                let mut traits = Vec::new();
+                if let Some(entries) = &race.entries {
+                    for entry in entries {
+                        if let Some(obj) = entry.as_object() {
+                            let name = obj
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let desc = obj
+                                .get("entries")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|e| e.as_str().map(str::to_string))
+                                        .collect::<Vec<_>>()
+                                        .join("\n")
+                                })
+                                .unwrap_or_default();
+                            if !name.is_empty() {
+                                traits.push((name, desc));
+                            }
+                        } else if let Some(s) = entry.as_str() {
+                            traits.push((s.to_string(), String::new()));
+                        }
+                    }
                 }
-            }
-            traits
-        } else { Vec::new() };
+                traits
+            } else {
+                Vec::new()
+            };
 
         // Resources
         self.spell_slots_used = [0; 9];
@@ -257,6 +336,60 @@ impl App {
             is_primary: true,
             subclass_id: None,
         }];
+
+        // Merge derived actions into the stored char_actions
+        let derived = self.derive_actions();
+        if let Some(ref mut actions) = self.char_actions {
+            for la in derived {
+                // If it's a limited use action, merge into limited_use
+                if la.max_uses.is_some() {
+                    if !actions.limited_use.iter().any(|a| a.name == la.name) {
+                        actions.limited_use.push(la.clone());
+                    } else {
+                        // Update max_uses in case level changed
+                        if let Some(existing) = actions.limited_use.iter_mut().find(|a| a.name == la.name) {
+                            existing.max_uses = la.max_uses;
+                        }
+                    }
+                }
+                // Also merge into 'all' if not present
+                if !actions.all.iter().any(|a| a.name == la.name) {
+                    actions.all.push(la.clone());
+                } else {
+                    if let Some(existing) = actions.all.iter_mut().find(|a| a.name == la.name) {
+                        existing.max_uses = la.max_uses;
+                    }
+                }
+                // Merge into 'attack' if it has hit_bonus/damage and not present
+                if (la.hit_bonus.is_some() || la.damage.is_some())
+                    && !actions.attack.iter().any(|a| a.name == la.name)
+                {
+                    actions.attack.push(la);
+                }
+            }
+        } else {
+            // If no char_actions from API, create it from derived
+            let mut actions = crate::models::actions::CharacterActionsResponse {
+                all: Vec::new(),
+                attack: Vec::new(),
+                action: Vec::new(),
+                bonus_action: Vec::new(),
+                reaction: Vec::new(),
+                other: Vec::new(),
+                limited_use: Vec::new(),
+            };
+            for la in derived {
+                actions.all.push(la.clone());
+                if la.max_uses.is_some() {
+                    actions.limited_use.push(la.clone());
+                }
+                if la.hit_bonus.is_some() || la.damage.is_some() {
+                    actions.attack.push(la);
+                }
+            }
+            self.char_actions = Some(actions);
+        }
+
         self.screen = Screen::CharacterSheet;
         self.sheet_tab = SheetTab::CoreStats;
         self.sheet_tab_index = 0;
@@ -270,21 +403,28 @@ impl App {
                 Some(c) => c,
                 None => return,
             };
-            
+
             let existing_notes = c.notes.as_deref().unwrap_or("");
             let skills_tag = if let Some(start) = existing_notes.find("[SKILLS:") {
-                let end = existing_notes[start..].find(']').map(|e| start + e + 1).unwrap_or(existing_notes.len());
+                let end = existing_notes[start..]
+                    .find(']')
+                    .map(|e| start + e + 1)
+                    .unwrap_or(existing_notes.len());
                 Some(existing_notes[start..end].to_string())
             } else {
                 None
             };
-            
+
             let notes = if let Some(tag) = skills_tag {
-                if self.notes_buffer.trim().is_empty() { tag } else { format!("{}\n{}", self.notes_buffer, tag) }
+                if self.notes_buffer.trim().is_empty() {
+                    tag
+                } else {
+                    format!("{}\n{}", self.notes_buffer, tag)
+                }
             } else {
                 self.notes_buffer.clone()
             };
-            
+
             (c.id, self.active_class_id, notes)
         };
 

@@ -165,6 +165,19 @@ pub struct Race {
     pub grants_bonus_feat: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RaceOption {
+    pub id: i32,
+    pub race_id: i32,
+    pub subrace_id: Option<i32>,
+    pub source_id: i32,
+    pub option_type: String,
+    pub choices: Option<Vec<JsonValue>>,
+    pub min_choose: i32,
+    pub max_choose: i32,
+    pub note: Option<String>,
+}
+
 // ── Background ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,6 +300,31 @@ pub struct OptionalFeature {
     pub entries: Vec<JsonValue>,
 }
 
+// ── Class Resources ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubclassChoice {
+    pub subclass_feature_id: i32,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubclassOption {
+    pub gate_feature_id: i32,
+    pub gate_feature_name: String,
+    pub choices: Vec<SubclassChoice>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClassResourceResponse {
+    pub class_name: String,
+    pub source: String,
+    pub level: i32,
+    pub lay_on_hands_pool: Option<i32>,
+    pub channel_divinity_uses: Option<i32>,
+    pub subclass_options: Option<Vec<SubclassOption>>,
+}
+
 // ── Feature interpretation helpers ───────────────────────────────────────────
 
 impl Feat {
@@ -323,7 +361,7 @@ fn json_entries_to_text(val: &JsonValue) -> String {
 }
 
 /// Recursively pull readable strings out of a JSON array (5e-tools schema).
-fn json_array_to_text(arr: &[JsonValue]) -> String {
+pub fn json_array_to_text(arr: &[JsonValue]) -> String {
     let mut parts = Vec::new();
     for entry in arr {
         collect_text(entry, &mut parts);

@@ -165,6 +165,7 @@ dependencies = [
  "chrono",
  "crossterm",
  "directories",
+ "once_cell",
  "ratatui",
  "reqwest",
  "serde",

@@ -80,7 +80,9 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
                 Span::styled("○ ", Style::default().fg(Color::DarkGray))
             };
 
-            let name_style = if expert {
+            let is_selected = app.sidebar_focused == false && app.selected_list_index == SKILLS.iter().position(|(s, _, _)| *s == *skill).unwrap_or(99);
+            
+            let mut name_style = if expert {
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
             } else if proficient {
                 Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
@@ -88,7 +90,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
                 Style::default().fg(Color::White)
             };
 
-            let mod_style = if expert {
+            let mut mod_style = if expert {
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
             } else if proficient {
                 Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
@@ -96,12 +98,18 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
                 Style::default().fg(Color::White)
             };
 
+            if is_selected {
+                name_style = name_style.bg(Color::Rgb(50, 50, 80));
+                mod_style = mod_style.bg(Color::Rgb(50, 50, 80));
+            }
+
             Row::new(vec![
                 ratatui::widgets::Cell::from(Line::from(dot)),
                 ratatui::widgets::Cell::from(format!("  {skill}")).style(name_style),
                 ratatui::widgets::Cell::from(ability.to_string()).style(Style::default().fg(Color::DarkGray)),
                 ratatui::widgets::Cell::from(crate::utils::format_modifier(total_mod)).style(mod_style),
             ])
+            .style(if is_selected { Style::default().bg(Color::Rgb(50, 50, 80)) } else { Style::default() })
         })
         .collect();
 
@@ -113,7 +121,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     ];
 
     // Proficiency bonus info line
-    let info = Paragraph::new(Line::from(vec![
+    let mut info_spans = vec![
         Span::styled("  Prof Bonus: ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             crate::utils::format_modifier(prof_bonus),
@@ -127,7 +135,16 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
             format!("   ◆ expertise (+{})", prof_bonus * 2),
             Style::default().fg(Color::Cyan),
         ),
-    ]));
+    ];
+
+    if !app.sidebar_focused {
+        info_spans.push(Span::styled(
+            "   [Enter/Space] to toggle proficiency",
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+
+    let info = Paragraph::new(Line::from(info_spans));
 
     // Split area: info line at top, table below
     let chunks = ratatui::layout::Layout::vertical([

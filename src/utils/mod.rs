@@ -1,4 +1,5 @@
 pub mod storage;
+pub mod weapon_mastery;
 
 use crate::models::character::Character;
 
@@ -63,7 +64,7 @@ pub fn max_prepared_spells(class_name: &str, level: i32, modifier: i32) -> i32 {
             4 => 5,
             5..=6 => 6,
             7..=8 => 7,
-            9..=10 => 8,
+            9..=10 => 9,
             11..=12 => 10,
             13..=14 => 11,
             15..=16 => 12,
@@ -88,15 +89,15 @@ pub fn spell_slots_max(caster_progression: &str, char_level: i32, slot_idx: usiz
     let caster_level = match caster_progression.to_lowercase().as_str() {
         // Progression-based (from API caster_progression field)
         "full" => char_level,
-        "1/2" => (char_level + 1) / 2, // 2024 rules: Level 1 -> 1, Level 2 -> 1, Level 3 -> 2
-        "1/3" => (char_level + 2) / 3, // 2024 rules: Level 1 -> 1, Level 4 -> 2
+        "1/2" => (char_level as f32 / 2.0).ceil() as i32, // 2024 rules: Level 1 -> 1, Level 2 -> 1, Level 3 -> 2
+        "1/3" => (char_level as f32 / 3.0).ceil() as i32, // 2024 rules: Level 1 -> 1, Level 4 -> 2
         "pact" => char_level, // pact magic handled separately; use same table for simplicity
         "artificer" => char_level, // artificer has its own progression similar to full
         // Legacy class name fallback
         "wizard" | "sorcerer" | "cleric" | "druid" | "bard" => char_level,
-        "paladin" | "ranger" => (char_level + 1) / 2,
+        "paladin" | "ranger" => (char_level as f32 / 2.0).ceil() as i32,
         "warlock" => char_level,
-        "fighter" | "rogue" => (char_level + 2) / 3,
+        "fighter" | "rogue" => (char_level as f32 / 3.0).ceil() as i32,
         _ => 0,
     };
     if caster_level < 1 {

@@ -3,9 +3,10 @@ use uuid::Uuid;
 use serde_json::json;
 
 use crate::models::{
-    AddCharacterClassRequest, AddInventoryRequest, AddSpellRequest, AsiChoiceRequest, Character,
-    CharacterFeat, CharacterSpell, CharacterSpellSlot, CreateCharacterRequest, Feat, InventoryItem,
-    PatchCharacterClassRequest, UpdateCharacterRequest, UpdateInventoryRequest, UpdateSpellRequest,
+    AddCharacterClassRequest, AddInventoryRequest, AddProficiencyRequest, AddSpellRequest,
+    AsiChoiceRequest, Character, CharacterFeat, CharacterProficiency, CharacterSpell,
+    CharacterSpellSlot, CreateCharacterRequest, Feat, InventoryItem, PatchCharacterClassRequest,
+    PatchProficiencyRequest, UpdateCharacterRequest, UpdateInventoryRequest, UpdateSpellRequest,
 };
 
 use super::{ApiClient, ApiError};
@@ -384,5 +385,66 @@ impl ApiClient {
         } else {
             self.handle_response::<()>(resp).await
         }
+    }
+
+    pub async fn save_race_option(
+        &self,
+        character_id: Uuid,
+        req: &crate::models::RaceOptionSelectionRequest,
+    ) -> Result<crate::models::CharacterRaceOption, ApiError> {
+        let resp = self
+            .auth_post(&format!("/characters/{character_id}/race-options"))
+            .json(req)
+            .send()
+            .await?;
+        self.handle_response(resp).await
+    }
+
+    // ── Proficiencies ──
+
+    pub async fn get_proficiencies(
+        &self,
+        character_id: Uuid,
+    ) -> Result<Vec<CharacterProficiency>, ApiError> {
+        let resp = self
+            .auth_get(&format!("/characters/{character_id}/proficiencies"))
+            .send()
+            .await?;
+        self.handle_response(resp).await
+    }
+
+    pub async fn add_proficiency(
+        &self,
+        character_id: Uuid,
+        req: &AddProficiencyRequest,
+    ) -> Result<CharacterProficiency, ApiError> {
+        let resp = self
+            .auth_post(&format!("/characters/{character_id}/proficiencies"))
+            .json(req)
+            .send()
+            .await?;
+        self.handle_response(resp).await
+    }
+
+    pub async fn patch_proficiency(
+        &self,
+        character_id: Uuid,
+        prof_id: i32,
+        req: &PatchProficiencyRequest,
+    ) -> Result<CharacterProficiency, ApiError> {
+        let resp = self
+            .auth_patch(&format!("/characters/{character_id}/proficiencies/{prof_id}"))
+            .json(req)
+            .send()
+            .await?;
+        self.handle_response(resp).await
+    }
+
+    pub async fn delete_proficiency(&self, character_id: Uuid, prof_id: i32) -> Result<(), ApiError> {
+        let resp = self
+            .auth_delete(&format!("/characters/{character_id}/proficiencies/{prof_id}"))
+            .send()
+            .await?;
+        self.handle_empty_response(resp).await
     }
 }

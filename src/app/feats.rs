@@ -141,10 +141,9 @@ impl App {
                         crate::utils::ABILITY_NAMES[self.asi_ability_a],
                         crate::utils::ABILITY_NAMES[self.asi_ability_b]
                     ),
-                    AsiMode::PlusTwo => format!(
-                        "+2 {}",
-                        crate::utils::ABILITY_NAMES[self.asi_ability_a]
-                    ),
+                    AsiMode::PlusTwo => {
+                        format!("+2 {}", crate::utils::ABILITY_NAMES[self.asi_ability_a])
+                    }
                 };
                 self.active_character = Some(updated_char);
                 self.status_msg = format!("ASI applied: {}", label);

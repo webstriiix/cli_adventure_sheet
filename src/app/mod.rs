@@ -5,15 +5,11 @@ use uuid::Uuid;
 use crate::client::ApiClient;
 use crate::models::{
     app_state::{
-        ActionsSubTab, AuthMode, BuilderState, EditSection,
-        MulticlassSection, PickerMode, Screen, SheetTab,
+        ActionsSubTab, AuthMode, BuilderState, EditSection, MulticlassSection, PickerMode, Screen,
+        SheetTab,
     },
-    character::{
-        Character, CharacterClass, CharacterFeat, CharacterSpell, InventoryItem,
-    },
-    compendium::{
-        Background, Class, ClassDetailResponse, ClassFeature, Feat, Item, Race, Spell,
-    },
+    character::{Character, CharacterClass, CharacterFeat, CharacterSpell, InventoryItem},
+    compendium::{Background, Class, ClassDetailResponse, ClassFeature, Feat, Item, Race, Spell},
 };
 use crate::ui;
 use crate::utils::storage::StorageManager;
@@ -88,6 +84,7 @@ pub struct App {
     pub char_weapon_masteries: Vec<String>,
     pub char_spells: Vec<CharacterSpell>,
     pub char_inventory: Vec<InventoryItem>,
+    pub char_proficiencies: Vec<crate::models::CharacterProficiency>,
     pub char_classes: Vec<CharacterClass>, // multiclass entries
     pub char_race_name: String,
     pub char_class_name: String,
@@ -103,6 +100,8 @@ pub struct App {
     pub char_race_traits: Vec<(String, String)>,
     /// Aggregated combat actions.
     pub char_actions: Option<crate::models::actions::CharacterActionsResponse>,
+    /// Class resources (LOH, Channel Divinity, etc.)
+    pub char_resources: Option<crate::models::ClassResourceResponse>,
     /// Selection state for the Limited Use sub-tab list.
     pub actions_list_state: ListState,
     /// Open action detail modal: (feature name, description). None = closed.
@@ -155,6 +154,10 @@ pub struct App {
 
     // Currency selection (Inventory tab): 0=PP, 1=GP, 2=EP, 3=SP, 4=CP
     pub currency_selected: usize,
+
+    // Proficiency editing state
+    pub editing_proficiencies: bool,
+    pub selected_ability_idx: usize,
 
     // Delete confirmation
     pub delete_confirm: bool,
@@ -229,6 +232,7 @@ impl App {
             char_weapon_masteries: Vec::new(),
             char_spells: Vec::new(),
             char_inventory: Vec::new(),
+            char_proficiencies: Vec::new(),
             char_classes: Vec::new(),
             char_race_name: String::new(),
             char_class_name: String::new(),
@@ -241,6 +245,7 @@ impl App {
             char_class_features: Vec::new(),
             char_race_traits: Vec::new(),
             char_actions: None,
+            char_resources: None,
             actions_list_state: ListState::default().with_selected(Some(0)),
             actions_detail_modal: None,
             spell_detail_modal: None,
@@ -279,6 +284,9 @@ impl App {
 
             currency_selected: 0,
 
+            editing_proficiencies: false,
+            selected_ability_idx: 0,
+
             delete_confirm: false,
 
             edit_character_id: None,
@@ -308,7 +316,7 @@ impl App {
         if !app.is_offline {
             app.check_saved_session();
         }
-        
+
         app
     }
 
@@ -400,10 +408,7 @@ impl App {
             }
             Err(_) => {
                 // Fallback to cache
-                if let Some(chars) = self
-                    .storage
-                    .load_cache::<Vec<Character>>("characters.json")
-                {
+                if let Some(chars) = self.storage.load_cache::<Vec<Character>>("characters.json") {
                     self.characters = chars;
                     self.is_offline = true;
                     self.status_msg = "Loaded characters from cache (Offline).".into();
@@ -521,10 +526,15 @@ impl App {
         for inv in self.char_inventory.iter().filter(|i| i.is_equipped) {
             if let Some(item) = self.all_items.iter().find(|i| i.id == inv.item_id) {
                 let itype = item.item_type.as_deref().unwrap_or("");
-                if itype.contains('W') { // 'M'elee Weapon, 'R'anged Weapon
-                    let is_finesse = item.properties.as_ref().map(|p| p.iter().any(|s| s.to_lowercase() == "finesse")).unwrap_or(false);
+                if itype.contains('W') {
+                    // 'M'elee Weapon, 'R'anged Weapon
+                    let is_finesse = item
+                        .properties
+                        .as_ref()
+                        .map(|p| p.iter().any(|s| s.to_lowercase() == "finesse"))
+                        .unwrap_or(false);
                     let is_ranged = itype.contains('R');
-                    
+
                     let ability_mod = if is_ranged || (is_finesse && dex_mod > str_mod) {
                         dex_mod
                     } else {
@@ -532,15 +542,40 @@ impl App {
                     };
 
                     let hit_bonus = prof + ability_mod;
-                    let damage_val = item.damage.as_ref()
+                    let damage_val = item
+                        .damage
+                        .as_ref()
                         .and_then(|v| v.as_str())
                         .unwrap_or("1d4");
-                    
+
+                    let mut desc = format!(
+                        "Proficiency with a {} allows you to add your proficiency bonus to the attack roll for any attack you make with it.",
+                        item.name
+                    );
+
+                    if let Some(props) = &item.properties {
+                        if !props.is_empty() {
+                            desc.push_str("\n\nProperties: ");
+                            desc.push_str(&props.join(", "));
+                        }
+                    }
+
+                    // Mastery details
+                    let mastery_name = crate::utils::weapon_mastery::get_mastery_property(&item.name);
+                    if mastery_name != "—" && self.char_weapon_masteries.iter().any(|m| m.eq_ignore_ascii_case(&item.name)) {
+                        let mastery_desc = crate::utils::weapon_mastery::get_mastery_description(mastery_name);
+                        desc.push_str(&format!("\n\nMastery: {} ({})\n{}", mastery_name, item.name, mastery_desc));
+                    }
+
                     derived.push(crate::models::actions::ActionEntry {
                         name: item.name.clone(),
                         source: Some("Inventory".into()),
-                        description: None,
-                        range: Some(if is_ranged { "80/320".into() } else { "5 ft".into() }),
+                        description: Some(desc),
+                        range: Some(if is_ranged {
+                            "80/320".into()
+                        } else {
+                            "5 ft".into()
+                        }),
                         hit_bonus: Some(format!("{:+}", hit_bonus)),
                         damage: Some(format!("{} {:+}", damage_val, ability_mod)),
                         max_uses: None,
@@ -553,10 +588,15 @@ impl App {
         }
 
         // Add default Unarmed Strike
+        let unarmed_desc = "Instead of using a weapon to make a melee attack, you can use a punch, kick, head-butt, or similar forceful blow.\n\n\
+            Damage. You make an attack roll against the target. On a hit, the target takes Bludgeoning damage equal to 1 plus your Strength modifier.\n\n\
+            Grapple. The target must succeed on a Strength or Dexterity saving throw (it chooses which), or it has the Grappled condition. The DC equals 8 + your Strength modifier and Proficiency Bonus.\n\n\
+            Shove. The target must succeed on a Strength or Dexterity saving throw (it chooses which), or you either push it 5 feet away or cause it to have the Prone condition. The DC equals 8 + your Strength modifier and Proficiency Bonus.";
+
         derived.push(crate::models::actions::ActionEntry {
             name: "Unarmed Strike".into(),
             source: Some("Rules".into()),
-            description: Some("You make a melee attack that involves using your body.".into()),
+            description: Some(unarmed_desc.into()),
             range: Some("5 ft".into()),
             hit_bonus: Some(format!("{:+}", prof + str_mod)),
             damage: Some(format!("{}", 1 + str_mod)),
@@ -565,6 +605,90 @@ impl App {
             reset_type: None,
             time: None,
         });
+
+        // Add Paladin resources (Lay on Hands, Channel Divinity)
+        if self.char_class_name.eq_ignore_ascii_case("paladin") {
+            // Lay on Hands
+            let loh_max = self
+                .char_resources
+                .as_ref()
+                .and_then(|r| r.lay_on_hands_pool)
+                .unwrap_or_else(|| level * 5);
+
+            let loh_desc = self
+                .char_class_features
+                .iter()
+                .find(|f| f.name.eq_ignore_ascii_case("lay on hands"))
+                .and_then(|f| f.entries.as_ref())
+                .map(|e| crate::models::compendium::json_array_to_text(e))
+                .unwrap_or_else(|| "As an action, you can touch a creature and draw power from the pool to restore a number of hit points to that creature, up to the maximum amount remaining in your pool.".into());
+
+            derived.push(crate::models::actions::ActionEntry {
+                name: "Lay on Hands".into(),
+                source: Some("Paladin".into()),
+                description: Some(loh_desc),
+                range: Some("Touch".into()),
+                hit_bonus: None,
+                damage: None,
+                max_uses: Some(loh_max),
+                current_uses: None,
+                reset_type: Some("Long Rest".into()),
+                time: Some(serde_json::json!([{"number": 1, "unit": "action"}])),
+            });
+
+            // Channel Divinity
+            let cd_max = if let Some(r) = &self.char_resources {
+                r.channel_divinity_uses
+            } else {
+                // Fallback: extract from class_table
+                self.classes
+                    .iter()
+                    .find(|c| c.id == self.active_class_id)
+                    .and_then(|c| c.class_table.as_ref())
+                    .and_then(|_table| {
+                        // Find column index for "Channel Divinity"
+                        let cd_col_idx = self
+                            .classes
+                            .iter()
+                            .find(|c| c.id == self.active_class_id)
+                            .and_then(|c| c.class_table.as_ref())
+                            .and_then(|t| t.first())
+ // Use first row to find labels if structured, but 5etools is different
+                            .map(|_| {
+                                // Realistically, we need the column labels.
+                                // 5etools class_table has "colLabels" in the class object usually, but here it's JsonValue.
+                                // Let's try to find it in the first row or assume a specific structure.
+                                // Fallback to level-based logic if table parsing fails.
+                                if level >= 18 { 3 } else if level >= 7 { 2 } else { 1 }
+                            });
+                        cd_col_idx
+                    })
+                    .or(Some(if level >= 18 { 3 } else if level >= 7 { 2 } else { 1 }))
+            };
+
+            if let Some(max) = cd_max {
+                let cd_desc = self
+                    .char_class_features
+                    .iter()
+                    .find(|f| f.name.eq_ignore_ascii_case("channel divinity"))
+                    .and_then(|f| f.entries.as_ref())
+                    .map(|e| crate::models::compendium::json_array_to_text(e))
+                    .unwrap_or_else(|| "You can use your Channel Divinity to create various effects.".into());
+
+                derived.push(crate::models::actions::ActionEntry {
+                    name: "Channel Divinity".into(),
+                    source: Some("Paladin".into()),
+                    description: Some(cd_desc),
+                    range: None,
+                    hit_bonus: None,
+                    damage: None,
+                    max_uses: Some(max),
+                    current_uses: None,
+                    reset_type: Some("Short or Long Rest".into()),
+                    time: None,
+                });
+            }
+        }
 
         derived
     }
@@ -751,6 +875,15 @@ impl App {
 
     pub fn has_skill_prof(&self, skill: &str) -> bool {
         let skill_lower = skill.to_lowercase();
+        // Check manual proficiencies first
+        if self.char_proficiencies.iter().any(|p| {
+            p.category == "skill"
+                && p.name.to_lowercase() == skill_lower
+                && (p.proficiency_type == "proficiency" || p.proficiency_type == "expertise")
+        }) {
+            return true;
+        }
+
         self.char_chosen_skills
             .iter()
             .any(|s| s.to_lowercase() == skill_lower)
@@ -758,6 +891,15 @@ impl App {
 
     pub fn has_expertise(&self, skill: &str) -> bool {
         let skill_lower = skill.to_lowercase();
+        // Check manual proficiencies first
+        if self.char_proficiencies.iter().any(|p| {
+            p.category == "skill"
+                && p.name.to_lowercase() == skill_lower
+                && p.proficiency_type == "expertise"
+        }) {
+            return true;
+        }
+
         self.char_expertise_skills
             .iter()
             .any(|s| s.to_lowercase().contains(&skill_lower))
@@ -788,16 +930,107 @@ impl App {
     }
 
     pub fn filtered_mastery_weapons(&self) -> Vec<&Item> {
+        let search = if self.screen == Screen::CharacterBuilder {
+            self.builder.feat_picker_search.to_lowercase()
+        } else {
+            self.picker_search.to_lowercase()
+        };
+
         self.all_items
             .iter()
             .filter(|i| {
-                let itype = i.item_type.as_deref().unwrap_or("");
-                itype.contains('W') && (self.picker_search.is_empty() || i.name.to_lowercase().contains(&self.picker_search.to_lowercase()))
+                // Check if weapon is in hardcoded mastery list
+                if !crate::utils::weapon_mastery::has_mastery(&i.name) {
+                    return false;
+                }
+
+                // Apply search filter if any
+                if !search.is_empty() {
+                    return i.name.to_lowercase().contains(&search);
+                }
+                true
             })
             .collect()
     }
 
     pub fn sync_resource_limits(&mut self) {
         // Implementation for syncing resource limits based on level/class
+    }
+
+    pub fn toggle_proficiency(&mut self, category: &str, name: &str) {
+        let char_id = match self.active_character.as_ref().map(|c| c.id) {
+            Some(id) => id,
+            None => return,
+        };
+
+        // Find existing
+        let existing = self
+            .char_proficiencies
+            .iter()
+            .find(|p| p.category == category && p.name == name)
+            .cloned();
+
+        let rt = self.rt.clone();
+        match existing {
+            None => {
+                // Add "proficiency"
+                let req = crate::models::AddProficiencyRequest {
+                    category: category.to_string(),
+                    name: name.to_string(),
+                    proficiency_type: "proficiency".to_string(),
+                };
+                if let Ok(new_prof) = rt.block_on(self.client.add_proficiency(char_id, &req)) {
+                    self.char_proficiencies.push(new_prof);
+                }
+            }
+            Some(prof) if prof.proficiency_type == "proficiency" => {
+                // Patch to "expertise"
+                let req = crate::models::PatchProficiencyRequest {
+                    proficiency_type: "expertise".to_string(),
+                };
+                if let Ok(updated) =
+                    rt.block_on(self.client.patch_proficiency(char_id, prof.id, &req))
+                {
+                    if let Some(p) = self.char_proficiencies.iter_mut().find(|p| p.id == prof.id) {
+                        p.proficiency_type = updated.proficiency_type;
+                    }
+                }
+            }
+            Some(prof) => {
+                // Delete (back to None)
+                if rt.block_on(self.client.delete_proficiency(char_id, prof.id)).is_ok() {
+                    self.char_proficiencies.retain(|p| p.id != prof.id);
+                }
+            }
+        }
+    }
+
+    /// Re-calculates derived actions (LOH, Channel Divinity, Weapons) and merges them
+    /// into the current character action state.
+    pub fn refresh_derived_actions(&mut self) {
+        let derived = self.derive_actions();
+        if let Some(ref mut actions) = self.char_actions {
+            for la in derived {
+                if la.max_uses.is_some() {
+                    if let Some(existing) = actions.limited_use.iter_mut().find(|a| a.name == la.name) {
+                        existing.max_uses = la.max_uses;
+                        existing.description = la.description.clone();
+                    } else {
+                        actions.limited_use.push(la.clone());
+                    }
+                }
+                if let Some(existing) = actions.all.iter_mut().find(|a| a.name == la.name) {
+                    existing.max_uses = la.max_uses;
+                    existing.description = la.description.clone();
+                } else {
+                    actions.all.push(la.clone());
+                }
+                if (la.hit_bonus.is_some() || la.damage.is_some())
+                    && !actions.attack.iter().any(|a| a.name == la.name)
+                {
+                    actions.attack.push(la);
+                }
+            }
+        }
     }
 }
