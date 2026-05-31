@@ -5,6 +5,7 @@ mod features;
 mod inventory;
 mod notes;
 mod picker;
+mod skills;
 mod spells;
 
 use crate::app::App;
@@ -20,6 +21,7 @@ pub use core_stats::{
 pub use inventory::{adjust_currency, handle_inventory_key};
 pub use notes::{handle_notes_edit_key, handle_notes_key};
 pub use picker::handle_picker_key;
+pub use skills::handle_skills_key;
 pub use spells::{handle_spells_key, persist_spell_slot};
 
 pub const ALL_CONDITIONS: &[&str] = &[
@@ -118,6 +120,7 @@ pub fn handle_sheet_key(app: &mut App, key: KeyEvent) {
             SheetTab::Features => handle_features_key(app, key),
             SheetTab::CoreStats => handle_core_stats_key(app, key),
             SheetTab::Actions => handle_actions_key(app, key),
+            SheetTab::Skills => handle_skills_key(app, key),
             _ => handle_default_content_key(app, key),
         }
     }

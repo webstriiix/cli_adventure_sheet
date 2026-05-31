@@ -3,9 +3,37 @@ use crate::models::{UpdateCharacterRequest, app_state::PickerMode};
 use crossterm::event::{KeyCode, KeyEvent};
 
 pub fn handle_core_stats_key(app: &mut App, key: KeyEvent) {
+    if app.editing_proficiencies {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('p') => app.editing_proficiencies = false,
+            KeyCode::Up => {
+                if app.selected_ability_idx > 0 {
+                    app.selected_ability_idx -= 1;
+                } else {
+                    app.selected_ability_idx = 5;
+                }
+            }
+            KeyCode::Down => {
+                app.selected_ability_idx = (app.selected_ability_idx + 1) % 6;
+            }
+            KeyCode::Enter => {
+                let name = crate::utils::ABILITY_NAMES[app.selected_ability_idx].to_lowercase();
+                app.toggle_proficiency("saving_throw", &name);
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Esc | KeyCode::Left => app.sidebar_focused = true,
         KeyCode::Char('q') => app.should_quit = true,
+        // Proficiency toggle mode
+        KeyCode::Char('p') => {
+            app.editing_proficiencies = true;
+            app.selected_ability_idx = 0;
+            app.status_msg = "Proficiency Edit Mode: Use arrows to select, Enter to cycle.".into();
+        }
         // Inspiration toggle
         KeyCode::Char('i') => {
             if let Some(ref mut ch) = app.active_character {

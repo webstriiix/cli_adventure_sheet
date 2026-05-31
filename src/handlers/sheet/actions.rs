@@ -46,36 +46,92 @@ pub fn handle_actions_key(app: &mut App, key: KeyEvent) {
                 ActionsSubTab::LimitedUse => ActionsSubTab::LimitedUse,
             };
         }
-        // Up/Down: row selection in LimitedUse, scroll elsewhere
+        // Up/Down: row selection across all sub-tabs
         KeyCode::Up => {
-            if on_limited {
-                let len = app
-                    .char_actions
-                    .as_ref()
-                    .map(|a| a.limited_use.len())
-                    .unwrap_or(0);
-                let cur = app.actions_list_state.selected().unwrap_or(0);
-                if len > 0 {
-                    let prev = if cur == 0 { len - 1 } else { cur - 1 };
-                    app.actions_list_state.select(Some(prev));
+            let len = match &app.char_actions {
+                Some(actions) => match app.actions_sub_tab {
+                    ActionsSubTab::All => {
+                        let mut count = actions.all.len();
+                        let local = app.derive_actions();
+                        for la in local {
+                            if !actions.all.iter().any(|a| a.name == la.name) {
+                                count += 1;
+                            }
+                        }
+                        count
+                    }
+                    ActionsSubTab::Attack => {
+                        let mut count = actions.attack.len();
+                        let local = app.derive_actions();
+                        for la in local {
+                            if !actions.attack.iter().any(|a| a.name == la.name) {
+                                count += 1;
+                            }
+                        }
+                        count
+                    }
+                    ActionsSubTab::Action => actions.action.len(),
+                    ActionsSubTab::BonusAction => actions.bonus_action.len(),
+                    ActionsSubTab::Reaction => actions.reaction.len(),
+                    ActionsSubTab::Other => actions.other.len(),
+                    ActionsSubTab::LimitedUse => actions.limited_use.len(),
+                },
+                None => {
+                    if app.actions_sub_tab == ActionsSubTab::Attack || app.actions_sub_tab == ActionsSubTab::All {
+                        app.derive_actions().len()
+                    } else {
+                        0
+                    }
                 }
-            } else if app.content_scroll > 0 {
-                app.content_scroll -= 1;
+            };
+            
+            let cur = app.actions_list_state.selected().unwrap_or(0);
+            if len > 0 {
+                let prev = if cur == 0 { len - 1 } else { cur - 1 };
+                app.actions_list_state.select(Some(prev));
             }
         }
         KeyCode::Down => {
-            if on_limited {
-                let len = app
-                    .char_actions
-                    .as_ref()
-                    .map(|a| a.limited_use.len())
-                    .unwrap_or(0);
-                let cur = app.actions_list_state.selected().unwrap_or(0);
-                if len > 0 {
-                    app.actions_list_state.select(Some((cur + 1) % len));
+            let len = match &app.char_actions {
+                Some(actions) => match app.actions_sub_tab {
+                    ActionsSubTab::All => {
+                        let mut count = actions.all.len();
+                        let local = app.derive_actions();
+                        for la in local {
+                            if !actions.all.iter().any(|a| a.name == la.name) {
+                                count += 1;
+                            }
+                        }
+                        count
+                    }
+                    ActionsSubTab::Attack => {
+                        let mut count = actions.attack.len();
+                        let local = app.derive_actions();
+                        for la in local {
+                            if !actions.attack.iter().any(|a| a.name == la.name) {
+                                count += 1;
+                            }
+                        }
+                        count
+                    }
+                    ActionsSubTab::Action => actions.action.len(),
+                    ActionsSubTab::BonusAction => actions.bonus_action.len(),
+                    ActionsSubTab::Reaction => actions.reaction.len(),
+                    ActionsSubTab::Other => actions.other.len(),
+                    ActionsSubTab::LimitedUse => actions.limited_use.len(),
+                },
+                None => {
+                    if app.actions_sub_tab == ActionsSubTab::Attack || app.actions_sub_tab == ActionsSubTab::All {
+                        app.derive_actions().len()
+                    } else {
+                        0
+                    }
                 }
-            } else {
-                app.content_scroll += 1;
+            };
+
+            let cur = app.actions_list_state.selected().unwrap_or(0);
+            if len > 0 {
+                app.actions_list_state.select(Some((cur + 1) % len));
             }
         }
         // Spend a use with '-'
@@ -123,29 +179,54 @@ pub fn change_limited_use(app: &mut App, delta: i32) {
     app.status_msg = format!("{}: {}/{}", resource_name, new_val, max);
 }
 
-/// Open the detail modal for the currently selected Limited Use action.
+/// Open the detail modal for the currently selected action.
 pub fn open_action_detail_modal(app: &mut App) {
-    if app.actions_sub_tab != crate::models::app_state::ActionsSubTab::LimitedUse {
-        return; // Only implemented for LimitedUse list currently
-    }
-
     let selected = app.actions_list_state.selected().unwrap_or(0);
-    if let Some(actions) = &app.char_actions {
-        if let Some(item) = actions.limited_use.get(selected) {
-            let name = item.name.clone();
-            let mut desc = item
-                .description
-                .clone()
-                .unwrap_or_else(|| "No description available.".to_string());
+    let local_actions = app.derive_actions();
 
-            // Clean up description formatting
-            desc = desc.replace("\\n", "\n").replace("\"", "");
-            if desc.starts_with('[') && desc.ends_with(']') {
-                desc = desc[1..desc.len() - 1].to_string();
+    let item = if let Some(ref actions) = app.char_actions {
+        match app.actions_sub_tab {
+            ActionsSubTab::LimitedUse => actions.limited_use.get(selected).cloned(),
+            ActionsSubTab::All => {
+                let mut all = actions.all.clone();
+                for la in local_actions {
+                    if !all.iter().any(|a| a.name == la.name) {
+                        all.push(la);
+                    }
+                }
+                all.get(selected).cloned()
             }
-            desc = crate::ui::sheet::features::strip_tags(&desc);
-
-            app.actions_detail_modal = Some((name, desc));
+            ActionsSubTab::Attack => {
+                let mut attack = actions.attack.clone();
+                for la in local_actions {
+                    if !attack.iter().any(|a| a.name == la.name) {
+                        attack.push(la);
+                    }
+                }
+                attack.get(selected).cloned()
+            }
+            ActionsSubTab::Action => actions.action.get(selected).cloned(),
+            ActionsSubTab::BonusAction => actions.bonus_action.get(selected).cloned(),
+            ActionsSubTab::Reaction => actions.reaction.get(selected).cloned(),
+            ActionsSubTab::Other => actions.other.get(selected).cloned(),
         }
+    } else if app.actions_sub_tab == ActionsSubTab::Attack || app.actions_sub_tab == ActionsSubTab::All {
+        local_actions.get(selected).cloned()
+    } else {
+        None
+    };
+
+    if let Some(item) = item {
+        let name = item.name;
+        let mut desc = item.description.unwrap_or_else(|| "No description available.".to_string());
+
+        // Clean up description formatting
+        desc = desc.replace("\\n", "\n").replace("\"", "");
+        if desc.starts_with('[') && desc.ends_with(']') {
+            desc = desc[1..desc.len() - 1].to_string();
+        }
+        desc = crate::ui::sheet::features::strip_tags(&desc);
+
+        app.actions_detail_modal = Some((name, desc));
     }
 }

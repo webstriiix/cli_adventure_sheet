@@ -23,6 +23,10 @@ pub fn handle_char_list_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('n') | KeyCode::Char('N') => {
             app.status_msg.clear();
             app.builder = crate::models::app_state::BuilderState::default();
+            // Ensure compendium data (including weapons) is loaded for builder
+            if app.all_items.is_empty() {
+                app.fetch_compendium_data();
+            }
             app.screen = Screen::CharacterBuilder;
         }
         KeyCode::Up => {

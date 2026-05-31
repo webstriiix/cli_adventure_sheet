@@ -336,6 +336,7 @@ pub fn save_edit_character(app: &mut App) {
                     app.edit_buffers[3] = updated.max_hp.to_string();
                 }
                 app.active_character = Some(updated);
+                app.refresh_derived_actions();
 
                 // Queue level-up prompts if level changed
                 if new_level != old_level {

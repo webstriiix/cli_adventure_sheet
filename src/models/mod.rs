@@ -7,13 +7,15 @@ pub mod features;
 
 pub use auth::{AuthResponse, LoginRequest, SignupRequest};
 pub use character::{
-    AddCharacterClassRequest, AddInventoryRequest, AddSpellRequest, AsiChoiceRequest, Character,
-    CharacterFeat, CharacterHitDice, CharacterSpell, CharacterSpellSlot, CreateCharacterRequest,
-    InventoryItem, PatchCharacterClassRequest, UpdateCharacterRequest, UpdateInventoryRequest,
-    UpdateSpellRequest,
+    AddCharacterClassRequest, AddInventoryRequest, AddProficiencyRequest, AddSpellRequest,
+    AsiChoiceRequest, Character, CharacterFeat, CharacterHitDice, CharacterProficiency,
+    CharacterRaceOption, CharacterSpell, CharacterSpellSlot, CreateCharacterRequest,
+    InventoryItem, PatchCharacterClassRequest, PatchProficiencyRequest,
+    RaceOptionSelectionRequest, UpdateCharacterRequest, UpdateInventoryRequest, UpdateSpellRequest,
 };
 pub use compendium::{
-    Background, Class, ClassDetailResponse, Feat, Item, Monster, OptionalFeature, Race, Spell,
+    Background, Class, ClassDetailResponse, ClassResourceResponse, Feat, Item, Monster,
+    OptionalFeature, Race, RaceOption, Spell,
 };
 pub use error::ApiErrorResponse;
 pub mod app_state;

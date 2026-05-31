@@ -291,3 +291,42 @@ pub struct UpdateInventoryRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
 }
+
+// ── Race Options ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RaceOptionSelectionRequest {
+    pub race_option_id: i32,
+    pub selection: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharacterRaceOption {
+    pub id: i32,
+    pub character_id: Uuid,
+    pub race_option_id: i32,
+    pub selection: serde_json::Value,
+}
+
+// ── Character Proficiencies ──
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CharacterProficiency {
+    pub id: i32,
+    pub character_id: Uuid,
+    pub category: String, // "saving_throw" or "skill"
+    pub name: String,
+    pub proficiency_type: String, // "proficiency" or "expertise"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddProficiencyRequest {
+    pub category: String,
+    pub name: String,
+    pub proficiency_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchProficiencyRequest {
+    pub proficiency_type: String,
+}

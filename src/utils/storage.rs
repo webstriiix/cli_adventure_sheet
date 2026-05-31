@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
-use crate::models::character::{Character, CharacterFeat, CharacterSpell, InventoryItem, CharacterSpellSlot, CharacterHitDice};
-use crate::models::compendium::{Background, Class, ClassDetailResponse, Feat, Item, Race, Spell};
+use crate::models::character::{Character, CharacterFeat, CharacterSpell, InventoryItem, CharacterSpellSlot, CharacterHitDice, CharacterProficiency};
+use crate::models::compendium::{Background, Class, ClassDetailResponse, Feat, Item, Race, Spell, ClassResourceResponse};
 use crate::models::actions::CharacterActionsResponse;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -20,8 +20,10 @@ pub struct FullCharacterCache {
     pub inventory: Vec<InventoryItem>,
     pub spell_slots: Vec<CharacterSpellSlot>,
     pub hit_dice: Vec<CharacterHitDice>,
+    pub proficiencies: Vec<CharacterProficiency>,
     pub class_detail: Option<ClassDetailResponse>,
     pub actions: Option<CharacterActionsResponse>,
+    pub resources: Option<ClassResourceResponse>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]

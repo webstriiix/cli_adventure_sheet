@@ -141,4 +141,31 @@ impl ApiClient {
         let resp = req.send().await?;
         self.handle_response(resp).await
     }
+
+    pub async fn get_race_options(
+        &self,
+        name: &str,
+        source: &str,
+    ) -> Result<Vec<crate::models::RaceOption>, ApiError> {
+        let resp = self
+            .http
+            .get(self.url(&format!("/races/{name}/{source}/options")))
+            .send()
+            .await?;
+        self.handle_response(resp).await
+    }
+
+    pub async fn get_class_resources(
+        &self,
+        name: &str,
+        source: &str,
+        level: i32,
+    ) -> Result<crate::models::ClassResourceResponse, ApiError> {
+        let resp = self
+            .http
+            .get(self.url(&format!("/classes/{name}/{source}/resources/{level}")))
+            .send()
+            .await?;
+        self.handle_response(resp).await
+    }
 }

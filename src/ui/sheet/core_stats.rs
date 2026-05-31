@@ -260,15 +260,15 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
 
     // ── Saving Throws ────────────────────────────────────────────────────────
     let saves_header = Paragraph::new(Span::styled(
-        "  SAVING THROWS",
+        if app.editing_proficiencies { "  SAVING THROWS (EDITING)" } else { "  SAVING THROWS [p edit]" },
         Style::default()
-            .fg(Color::Cyan)
+            .fg(if app.editing_proficiencies { Color::Yellow } else { Color::Cyan })
             .add_modifier(Modifier::BOLD),
     ));
     frame.render_widget(saves_header, chunks[4]);
 
     // Fix: match by class name, not first class found
-    let prof_saves: Vec<String> = app
+    let class_prof_saves: Vec<String> = app
         .classes
         .iter()
         .find(|c| c.name == app.char_class_name)
@@ -277,23 +277,41 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
 
     let save_spans: Vec<Span> = scores
         .iter()
-        .flat_map(|(name, score)| {
+        .enumerate()
+        .flat_map(|(idx, (name, score))| {
             let base_mod = crate::utils::ability_modifier(*score);
-            let is_proficient = prof_saves.iter().any(|s| s.eq_ignore_ascii_case(name));
-            let total = if is_proficient {
-                base_mod + prof_bonus
-            } else {
-                base_mod
+            
+            // Manual proficiency check
+            let manual = app.char_proficiencies.iter()
+                .find(|p| p.category == "saving_throw" && p.name.eq_ignore_ascii_case(name));
+            
+            let (is_prof, is_exp) = match manual {
+                Some(p) => (true, p.proficiency_type == "expertise"),
+                None => (class_prof_saves.iter().any(|s| s.eq_ignore_ascii_case(name)), false),
             };
-            let color = if is_proficient {
+
+            let bonus = if is_exp { prof_bonus * 2 } else if is_prof { prof_bonus } else { 0 };
+            let total = base_mod + bonus;
+            
+            let color = if is_exp {
+                Color::Yellow
+            } else if is_prof {
                 Color::Green
             } else {
                 Color::White
             };
-            let marker = if is_proficient { "●" } else { " " };
+            
+            let marker = if is_exp { "★" } else if is_prof { "●" } else { " " };
+            
+            let is_selected = app.editing_proficiencies && app.selected_ability_idx == idx;
+            let mut style = Style::default().fg(color);
+            if is_selected {
+                style = style.bg(Color::Rgb(50, 50, 80)).add_modifier(Modifier::UNDERLINED);
+            }
+
             vec![Span::styled(
                 format!(" {marker}{name} {} ", crate::utils::format_modifier(total)),
-                Style::default().fg(color),
+                style,
             )]
         })
         .collect();
@@ -311,8 +329,15 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(senses_header, chunks[6]);
 
     // Passive Perception: 10 + WIS mod + prof bonus if proficient in Perception
-    let perc_prof =
-        prof_saves.iter().any(|s| s.eq_ignore_ascii_case("WIS")) || app.has_perception_prof();
+    let wis_manual = app.char_proficiencies.iter()
+        .find(|p| p.category == "saving_throw" && p.name.eq_ignore_ascii_case("WIS"));
+    
+    let is_wis_prof = match wis_manual {
+        Some(_) => true,
+        None => class_prof_saves.iter().any(|s| s.eq_ignore_ascii_case("WIS")),
+    };
+
+    let perc_prof = is_wis_prof || app.has_perception_prof();
     let invest_prof = app.has_skill_prof("investigation");
     let int_mod = crate::utils::ability_modifier(character.intelligence);
     let passive_perception = 10 + wis_mod + if perc_prof { prof_bonus } else { 0 };

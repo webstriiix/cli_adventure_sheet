@@ -112,12 +112,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
     // ── Detail panel ─────────────────────────────────────────────────────────
     let detail_lines = if let Some(weapon) = filtered.get(app.builder.feat_picker_index) {
-        let mastery_name = weapon
-            .mastery
-            .as_ref()
-            .and_then(|v| v.first())
-            .cloned()
-            .unwrap_or_else(|| "—".to_string());
+        let mastery_name = crate::utils::weapon_mastery::get_mastery_property(&weapon.name);
 
         let description = match mastery_name.to_lowercase().as_str() {
             "cleave" => "Allows you to make an additional attack against a second target adjacent to your first.",
@@ -207,14 +202,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 app.builder.feat_picker_index += 1;
             }
         }
-        KeyCode::Char(c) if c != ' ' => {
-            app.builder.feat_picker_search.push(c);
-            app.builder.feat_picker_index = 0;
-        }
-        KeyCode::Backspace => {
-            app.builder.feat_picker_search.pop();
-            app.builder.feat_picker_index = 0;
-        }
         // Space or Enter: toggle selection
         KeyCode::Char(' ') | KeyCode::Enter => {
             let search = app.builder.feat_picker_search.to_lowercase();
@@ -257,6 +244,16 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                     "Weapon masteries confirmed: {}",
                     app.builder.weapon_mastery_choices.join(", ")
                 );
+            }
+        }
+        KeyCode::Backspace => {
+            app.builder.feat_picker_search.pop();
+            app.builder.feat_picker_index = 0;
+        }
+        KeyCode::Char(c) => {
+            if c.is_alphanumeric() || c == '+' || c == '-' {
+                app.builder.feat_picker_search.push(c);
+                app.builder.feat_picker_index = 0;
             }
         }
         _ => {}

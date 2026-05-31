@@ -1,6 +1,7 @@
 mod auth;
 mod character;
 mod compendium;
+mod admin;
 
 use crate::models::ApiErrorResponse;
 
