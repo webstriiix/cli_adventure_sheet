@@ -4,7 +4,7 @@ use serde_json::json;
 
 use crate::models::{
     AddCharacterClassRequest, AddInventoryRequest, AddProficiencyRequest, AddSpellRequest,
-    AsiChoiceRequest, Character, CharacterFeat, CharacterProficiency, CharacterSpell,
+    AsiChoiceRequest, Character, CharacterClassResponse, CharacterFeat, CharacterProficiency, CharacterSpell,
     CharacterSpellSlot, CreateCharacterRequest, Feat, InventoryItem, PatchCharacterClassRequest,
     PatchProficiencyRequest, UpdateCharacterRequest, UpdateInventoryRequest, UpdateSpellRequest,
 };
@@ -293,6 +293,20 @@ impl ApiClient {
         let resp = self
             .auth_post(&format!("/characters/{character_id}/asi-choice"))
             .json(req)
+            .send()
+            .await?;
+        self.handle_response(resp).await
+    }
+
+    // ── Character Classes ──
+
+    /// GET /characters/{id}/classes — list all classes for a character with subclass info.
+    pub async fn get_character_classes(
+        &self,
+        character_id: Uuid,
+    ) -> Result<Vec<CharacterClassResponse>, ApiError> {
+        let resp = self
+            .auth_get(&format!("/characters/{character_id}/classes"))
             .send()
             .await?;
         self.handle_response(resp).await

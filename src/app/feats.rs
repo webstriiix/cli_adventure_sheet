@@ -86,33 +86,13 @@ impl App {
         let mut increases: std::collections::HashMap<String, i32> =
             std::collections::HashMap::new();
 
-        use crate::app::AsiMode;
-        match self.asi_mode {
-            AsiMode::PlusOneThree => {
-                *increases
-                    .entry(ability_keys[self.asi_ability_a].to_string())
-                    .or_insert(0) += 1;
-                *increases
-                    .entry(ability_keys[self.asi_ability_b].to_string())
-                    .or_insert(0) += 1;
-                *increases
-                    .entry(ability_keys[self.asi_ability_c].to_string())
-                    .or_insert(0) += 1;
-            }
-            AsiMode::PlusOneTwo => {
-                *increases
-                    .entry(ability_keys[self.asi_ability_a].to_string())
-                    .or_insert(0) += 2;
-                *increases
-                    .entry(ability_keys[self.asi_ability_b].to_string())
-                    .or_insert(0) += 1;
-            }
-            AsiMode::PlusTwo => {
-                *increases
-                    .entry(ability_keys[self.asi_ability_a].to_string())
-                    .or_insert(0) += 2;
-            }
-        }
+        // Only mode: +1/+1 to two abilities
+        *increases
+            .entry(ability_keys[self.asi_ability_a].to_string())
+            .or_insert(0) += 1;
+        *increases
+            .entry(ability_keys[self.asi_ability_b].to_string())
+            .or_insert(0) += 1;
 
         let req = AsiChoiceRequest {
             bump_str: increases.get("str").copied(),
@@ -122,29 +102,17 @@ impl App {
             bump_wis: increases.get("wis").copied(),
             bump_cha: increases.get("cha").copied(),
             feat_id: None,
-            source_type: None, // Will use 'asi' on the backend or we can be explicit
+            source_type: None,
         };
 
         let rt = self.rt.clone();
         match rt.block_on(self.client.post_asi_choice(character.id, &req)) {
             Ok(updated_char) => {
-                use crate::app::AsiMode;
-                let label = match self.asi_mode {
-                    AsiMode::PlusOneThree => format!(
-                        "+1 {}, +1 {} and +1 {}",
-                        crate::utils::ABILITY_NAMES[self.asi_ability_a],
-                        crate::utils::ABILITY_NAMES[self.asi_ability_b],
-                        crate::utils::ABILITY_NAMES[self.asi_ability_c],
-                    ),
-                    AsiMode::PlusOneTwo => format!(
-                        "+2 {} and +1 {}",
-                        crate::utils::ABILITY_NAMES[self.asi_ability_a],
-                        crate::utils::ABILITY_NAMES[self.asi_ability_b]
-                    ),
-                    AsiMode::PlusTwo => {
-                        format!("+2 {}", crate::utils::ABILITY_NAMES[self.asi_ability_a])
-                    }
-                };
+                let label = format!(
+                    "+1 {} and +1 {}",
+                    crate::utils::ABILITY_NAMES[self.asi_ability_a],
+                    crate::utils::ABILITY_NAMES[self.asi_ability_b],
+                );
                 self.active_character = Some(updated_char);
                 self.status_msg = format!("ASI applied: {}", label);
                 self.picker_mode = PickerMode::None;
@@ -224,7 +192,6 @@ impl App {
             .iter()
             .filter(|f| search.is_empty() || f.name.to_lowercase().contains(&search))
             .filter(|f| {
-                // If no character context, show all
                 let Some(ref ch) = character else {
                     return true;
                 };

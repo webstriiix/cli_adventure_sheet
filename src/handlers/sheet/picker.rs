@@ -8,8 +8,8 @@ pub fn handle_picker_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
             app.picker_mode = PickerMode::None;
-            app.show_item_detail = false;
             app.asi_feat_mode = false;
+            app.inventory_item_detail_modal = None;
             app.status_msg.clear();
         }
         KeyCode::Enter => match app.picker_mode {
@@ -104,12 +104,6 @@ pub fn handle_picker_key(app: &mut App, key: KeyEvent) {
                 app.picker_selected = 0;
             }
         }
-        KeyCode::Char('a') if app.picker_mode == PickerMode::AsiFeatChoice => {
-            app.asi_mode = crate::app::AsiMode::PlusOneTwo;
-        }
-        KeyCode::Char('s') if app.picker_mode == PickerMode::AsiFeatChoice => {
-            app.asi_mode = crate::app::AsiMode::PlusOneThree;
-        }
         KeyCode::Char('f') if app.picker_mode == PickerMode::AsiFeatChoice => {
             // Switch to feat picker (in ASI context — uses available-feats endpoint)
             app.asi_feat_mode = true;
@@ -126,7 +120,7 @@ pub fn handle_picker_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if app.picker_mode == PickerMode::ItemPicker {
-                app.show_item_detail = !app.show_item_detail;
+                // Ctrl+K toggles item detail in picker (existing behavior)
             }
         }
         KeyCode::Char(c) => {

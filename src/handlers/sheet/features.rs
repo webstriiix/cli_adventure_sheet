@@ -43,12 +43,22 @@ pub fn handle_features_key(app: &mut App, key: KeyEvent) {
             app.picker_selected = 0;
         }
         KeyCode::Up => {
-            if app.content_scroll > 0 {
+            if app.features_sub_tab == FeaturesSubTab::Feats && !app.char_feats.is_empty() {
+                if app.selected_list_index > 0 {
+                    app.selected_list_index -= 1;
+                }
+            } else if app.content_scroll > 0 {
                 app.content_scroll -= 1;
             }
         }
         KeyCode::Down => {
-            app.content_scroll += 1;
+            if app.features_sub_tab == FeaturesSubTab::Feats && !app.char_feats.is_empty() {
+                if app.selected_list_index + 1 < app.char_feats.len() {
+                    app.selected_list_index += 1;
+                }
+            } else {
+                app.content_scroll += 1;
+            }
         }
         // Use feature: 'u'
         KeyCode::Char('u') | KeyCode::Char('U') => {

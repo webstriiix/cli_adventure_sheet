@@ -136,7 +136,7 @@ fn render_fields(app: &App, frame: &mut Frame, area: Rect) {
                 || idx == F_CHA
             {
                 let v: i32 = app.edit_buffers[idx].parse().unwrap_or(0);
-                let modifier = (v - 10) / 2;
+                let modifier = (v - 10).div_euclid(2);
                 let sign = if modifier >= 0 { "+" } else { "" };
                 format!("{}  ({}{} mod)", app.edit_buffers[idx], sign, modifier)
             } else {
@@ -518,59 +518,19 @@ fn render_level_up_overlay(app: &mut App, frame: &mut Frame, area: Rect) {
                 } else {
                     Style::default().fg(Color::White)
                 };
-                let style_c = if app.asi_choice_index == 2 {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::White)
-                };
 
-                use crate::app::AsiMode;
-                match app.asi_mode {
-                    AsiMode::PlusOneThree => {
-                        lines.push(Line::from(vec![
-                            Span::raw("  +1 to: "),
-                            Span::styled(
-                                format!("{:<3}", ABILITY_NAMES[app.asi_ability_a]),
-                                style_a,
-                            ),
-                            Span::raw("   +1 to: "),
-                            Span::styled(
-                                format!("{:<3}", ABILITY_NAMES[app.asi_ability_b]),
-                                style_b,
-                            ),
-                            Span::raw("   +1 to: "),
-                            Span::styled(
-                                format!("{:<3}", ABILITY_NAMES[app.asi_ability_c]),
-                                style_c,
-                            ),
-                        ]));
-                    }
-                    AsiMode::PlusOneTwo => {
-                        lines.push(Line::from(vec![
-                            Span::raw("  +2 to: "),
-                            Span::styled(
-                                format!("{:<3}", ABILITY_NAMES[app.asi_ability_a]),
-                                style_a,
-                            ),
-                            Span::raw("   +1 to: "),
-                            Span::styled(
-                                format!("{:<3}", ABILITY_NAMES[app.asi_ability_b]),
-                                style_b,
-                            ),
-                        ]));
-                    }
-                    AsiMode::PlusTwo => {
-                        lines.push(Line::from(vec![
-                            Span::raw("  +2 to: "),
-                            Span::styled(
-                                format!("{:<3}", ABILITY_NAMES[app.asi_ability_a]),
-                                style_a,
-                            ),
-                        ]));
-                    }
-                }
+                lines.push(Line::from(vec![
+                    Span::raw("  +1 to: "),
+                    Span::styled(
+                        format!("{:<3}", ABILITY_NAMES[app.asi_ability_a]),
+                        style_a,
+                    ),
+                    Span::raw("   +1 to: "),
+                    Span::styled(
+                        format!("{:<3}", ABILITY_NAMES[app.asi_ability_b]),
+                        style_b,
+                    ),
+                ]));
                 lines.push(Line::from("  (Use Tab/Shift+Tab and ↑↓ to change)"));
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(

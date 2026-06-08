@@ -8,7 +8,7 @@ pub mod features;
 pub use auth::{AuthResponse, LoginRequest, SignupRequest};
 pub use character::{
     AddCharacterClassRequest, AddInventoryRequest, AddProficiencyRequest, AddSpellRequest,
-    AsiChoiceRequest, Character, CharacterFeat, CharacterHitDice, CharacterProficiency,
+    AsiChoiceRequest, Character, CharacterClassResponse, CharacterFeat, CharacterHitDice, CharacterProficiency,
     CharacterRaceOption, CharacterSpell, CharacterSpellSlot, CreateCharacterRequest,
     InventoryItem, PatchCharacterClassRequest, PatchProficiencyRequest,
     RaceOptionSelectionRequest, UpdateCharacterRequest, UpdateInventoryRequest, UpdateSpellRequest,

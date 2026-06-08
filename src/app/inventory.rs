@@ -176,7 +176,6 @@ impl App {
                 self.char_inventory.push(inv_item);
                 self.status_msg = "Item added!".to_string();
                 self.picker_mode = PickerMode::None;
-                self.show_item_detail = false;
             }
             Err(e) => {
                 self.status_msg = format!("Failed to add item: {e}");

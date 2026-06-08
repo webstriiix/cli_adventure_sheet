@@ -111,12 +111,36 @@ impl App {
         let class_id = self.active_class_id;
         let req = PatchCharacterClassRequest { level, subclass_id };
         let rt = self.rt.clone();
+
+        // Update local state immediately regardless of API success
+        if let Some(cc) = self.char_classes.first_mut() {
+            if let Some(sid) = subclass_id {
+                cc.subclass_id = Some(sid);
+            }
+            if let Some(lvl) = level {
+                cc.level = lvl;
+            }
+        }
+
         match rt.block_on(self.client.patch_character_class(character_id, class_id, &req)) {
             Ok(updated_char) => {
-                self.active_character = Some(updated_char);
+                self.active_character = Some(updated_char.clone());
                 self.status_msg = "Class updated.".to_string();
             }
-            Err(e) => self.status_msg = format!("Failed to update class: {e}"),
+            Err(e) => {
+                self.status_msg = format!("Failed to update class: {e}");
+            }
+        }
+
+        // Verify and update local state with what backend actually saved
+        let rt2 = self.rt.clone();
+        if let Ok(classes) = rt2.block_on(self.client.get_character_classes(character_id)) {
+            if let Some(primary) = classes.iter().find(|c| c.is_primary) {
+                if let Some(cc) = self.char_classes.first_mut() {
+                    cc.subclass_id = primary.subclass_id;
+                    cc.level = primary.level;
+                }
+            }
         }
     }
 

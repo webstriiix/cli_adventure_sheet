@@ -1,10 +1,5 @@
 use crate::app::App;
 use crate::models::{CreateCharacterRequest, UpdateCharacterRequest, app_state::BuilderState};
-use crossterm::event::KeyEvent;
-
-pub fn handle_builder_key(app: &mut App, key: KeyEvent) {
-    crate::ui::builder::handle_key(app, key);
-}
 
 pub fn submit_character_from_builder(app: &mut App) {
     let b = &app.builder;
@@ -24,7 +19,7 @@ pub fn submit_character_from_builder(app: &mut App) {
         .find(|c| c.id == class_id)
         .map(|c| c.hit_die)
         .unwrap_or(8);
-    let con_mod = (b.abilities[2] + b.bg_ability_bonuses[2] - 10) / 2;
+    let con_mod = (b.abilities[2] + b.bg_ability_bonuses[2] - 10).div_euclid(2);
     let max_hp = (hit_die + con_mod).max(1);
 
     // Pack lore into notes since the API has no dedicated fields for it

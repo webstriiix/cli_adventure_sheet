@@ -55,17 +55,13 @@ pub fn handle_spells_key(app: &mut App, key: KeyEvent) {
         }
         // Expending spell slots: 1-9
         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-            let slot_idx = c.to_digit(10).unwrap() as usize - 1;
-            let level = app
-                .active_character
-                .as_ref()
-                .map(|ch| crate::utils::level_from_xp(ch.experience_pts))
-                .unwrap_or(1);
-            let max = crate::utils::spell_slots_max(&app.char_caster_progression, level, slot_idx);
+            if let Some(slot_idx) = c.to_digit(10).map(|d| d as usize - 1) {
+                let max = app.spell_slots_max_for_slot(slot_idx);
 
-            if max > 0 && app.spell_slots_used[slot_idx] < max {
-                app.spell_slots_used[slot_idx] += 1;
-                persist_spell_slot(app, slot_idx);
+                if max > 0 && app.spell_slots_used[slot_idx] < max {
+                    app.spell_slots_used[slot_idx] += 1;
+                    persist_spell_slot(app, slot_idx);
+                }
             }
         }
         // Recovering spell slots: shift+1-9 using characters
@@ -74,12 +70,7 @@ pub fn handle_spells_key(app: &mut App, key: KeyEvent) {
             if let Some(num) = shift_chars.find(c) {
                 if num > 0 && num <= 9 {
                     let slot_idx = num - 1;
-                    let level = app
-                        .active_character
-                        .as_ref()
-                        .map(|ch| crate::utils::level_from_xp(ch.experience_pts))
-                        .unwrap_or(1);
-                    let max = crate::utils::spell_slots_max(&app.char_caster_progression, level, slot_idx);
+                    let max = app.spell_slots_max_for_slot(slot_idx);
 
                     if max > 0 && app.spell_slots_used[slot_idx] > 0 {
                         app.spell_slots_used[slot_idx] -= 1;

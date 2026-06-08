@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use ratatui::{Frame, widgets::ListState};
 use uuid::Uuid;
@@ -9,7 +10,7 @@ use crate::models::{
         SheetTab,
     },
     character::{Character, CharacterClass, CharacterFeat, CharacterSpell, InventoryItem},
-    compendium::{Background, Class, ClassDetailResponse, ClassFeature, Feat, Item, Race, Spell},
+    compendium::{Background, Class, ClassDetailResponse, ClassFeature, Feat, Item, Race, Spell, SubclassFeature},
 };
 use crate::ui;
 use crate::utils::storage::StorageManager;
@@ -25,9 +26,7 @@ pub enum FeaturesSubTab {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AsiMode {
-    PlusTwo,
-    PlusOneTwo,
-    PlusOneThree,
+    PlusOneTwo, // +1/+1 to two abilities
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -83,6 +82,8 @@ pub struct App {
     pub char_feats: Vec<CharacterFeat>,
     pub char_weapon_masteries: Vec<String>,
     pub char_spells: Vec<CharacterSpell>,
+    /// Source of each spell (spell_id → "Spellbook", "Paladin", "Oath of Devotion", etc.)
+    pub spell_sources: HashMap<i32, String>,
     pub char_inventory: Vec<InventoryItem>,
     pub char_proficiencies: Vec<crate::models::CharacterProficiency>,
     pub char_classes: Vec<CharacterClass>, // multiclass entries
@@ -96,6 +97,8 @@ pub struct App {
     pub char_subclass_name: String, // cached subclass name (empty if none/unknown)
     /// Class features up to the character's current level (from class detail API).
     pub char_class_features: Vec<ClassFeature>,
+    /// Subclass features up to the character's current level (from class detail API).
+    pub char_subclass_features: Vec<SubclassFeature>,
     /// Race traits parsed from race.entries as (name, description) pairs.
     pub char_race_traits: Vec<(String, String)>,
     /// Aggregated combat actions.
@@ -114,6 +117,9 @@ pub struct App {
     pub concentrating_on: Option<i32>, // spell_id of concentration spell, None if not concentrating
 
     // Spell slots and hit dice tracking
+    /// Spell slots from the API class definition (max slots per level), indexed [level-1][slot_idx].
+    /// Empty if not loaded / non-spellcaster.
+    pub char_spell_slots: Vec<Vec<u8>>,
     pub spell_slots_used: [u8; 9],
     pub spell_level_filter: Option<i32>, // None = All, Some(0) = cantrips, Some(1-9) = spell levels
     pub spell_level_tab_index: usize,    // 0=All, 1=0(cantrips), 2=1st, ..., 6=5th
@@ -131,14 +137,18 @@ pub struct App {
     // Sub-views specifically for the Features tab
     pub features_sub_tab: FeaturesSubTab,
 
+    // Caching for expensive operations
+    pub cached_actions: Option<Vec<crate::models::actions::ActionEntry>>,
+    pub spells_dirty: bool,
+
     pub picker_mode: PickerMode,
     pub picker_search: String,
     pub picker_selected: usize,
     pub picker_list_state: ratatui::widgets::ListState,
     pub selected_list_index: usize,
     pub sheet_table_state: ratatui::widgets::TableState,
-    pub show_compendium_detail: bool,
-    pub show_item_detail: bool,
+    /// Item detail modal for inventory view: (name, description). None = closed.
+    pub inventory_item_detail_modal: Option<(String, String)>,
 
     // Death saves — synced with API
     pub death_saves_success: u8, // 0–3
@@ -149,7 +159,7 @@ pub struct App {
     pub asi_ability_a: usize,    // index into ABILITY_NAMES
     pub asi_ability_b: usize,    // index into ABILITY_NAMES (for +1/+1 mode)
     pub asi_ability_c: usize,    // index into ABILITY_NAMES (for +1/+1/+1 mode)
-    pub asi_mode: AsiMode,       // +2, +1/+1, +1/+1/+1
+    pub asi_mode: AsiMode,       // +1/+1
     pub asi_feat_mode: bool,     // true = FeatPicker was opened from ASI choice overlay
 
     // Currency selection (Inventory tab): 0=PP, 1=GP, 2=EP, 3=SP, 4=CP
@@ -231,6 +241,7 @@ impl App {
             char_feats: Vec::new(),
             char_weapon_masteries: Vec::new(),
             char_spells: Vec::new(),
+            spell_sources: HashMap::new(),
             char_inventory: Vec::new(),
             char_proficiencies: Vec::new(),
             char_classes: Vec::new(),
@@ -243,6 +254,7 @@ impl App {
             char_expertise_skills: Vec::new(),
             char_subclass_name: String::new(),
             char_class_features: Vec::new(),
+            char_subclass_features: Vec::new(),
             char_race_traits: Vec::new(),
             char_actions: None,
             char_resources: None,
@@ -251,6 +263,7 @@ impl App {
             spell_detail_modal: None,
             conditions: Vec::new(),
             concentrating_on: None,
+            char_spell_slots: Vec::new(),
             spell_slots_used: [0u8; 9],
             spell_level_filter: None,
             spell_level_tab_index: 0,
@@ -263,14 +276,15 @@ impl App {
             editing_notes: false,
             notes_buffer: String::new(),
             notes_cursor: 0,
+            cached_actions: None,
+            spells_dirty: true,
             picker_mode: PickerMode::None,
             picker_search: String::new(),
             picker_selected: 0,
             picker_list_state: ratatui::widgets::ListState::default().with_selected(Some(0)),
             selected_list_index: 0,
             sheet_table_state: ratatui::widgets::TableState::default().with_selected(Some(0)),
-            show_compendium_detail: false,
-            show_item_detail: false,
+            inventory_item_detail_modal: None,
 
             death_saves_success: 0,
             death_saves_fail: 0,
@@ -447,7 +461,7 @@ impl App {
                 Screen::CharacterList => {
                     crate::handlers::character_list::handle_char_list_key(self, key)
                 }
-                Screen::CharacterBuilder => crate::handlers::builder::handle_builder_key(self, key),
+                Screen::CharacterBuilder => crate::ui::builder::handle_key(self, key),
                 Screen::CharacterSheet => crate::handlers::sheet::handle_sheet_key(self, key),
                 Screen::EditCharacter => {
                     crate::handlers::edit::handle_edit_character_key(self, key)
@@ -640,30 +654,8 @@ impl App {
             let cd_max = if let Some(r) = &self.char_resources {
                 r.channel_divinity_uses
             } else {
-                // Fallback: extract from class_table
-                self.classes
-                    .iter()
-                    .find(|c| c.id == self.active_class_id)
-                    .and_then(|c| c.class_table.as_ref())
-                    .and_then(|_table| {
-                        // Find column index for "Channel Divinity"
-                        let cd_col_idx = self
-                            .classes
-                            .iter()
-                            .find(|c| c.id == self.active_class_id)
-                            .and_then(|c| c.class_table.as_ref())
-                            .and_then(|t| t.first())
- // Use first row to find labels if structured, but 5etools is different
-                            .map(|_| {
-                                // Realistically, we need the column labels.
-                                // 5etools class_table has "colLabels" in the class object usually, but here it's JsonValue.
-                                // Let's try to find it in the first row or assume a specific structure.
-                                // Fallback to level-based logic if table parsing fails.
-                                if level >= 18 { 3 } else if level >= 7 { 2 } else { 1 }
-                            });
-                        cd_col_idx
-                    })
-                    .or(Some(if level >= 18 { 3 } else if level >= 7 { 2 } else { 1 }))
+                // Fallback: level-based logic (class_table extraction is unreliable with 5etools format)
+                Some(if level >= 18 { 3 } else if level >= 7 { 2 } else { 1 })
             };
 
             if let Some(max) = cd_max {
@@ -691,6 +683,26 @@ impl App {
         }
 
         derived
+    }
+
+    /// Returns the max spell slots for a given slot index (0=1st level), preferring
+    /// the API-provided `char_spell_slots` over the hardcoded table.
+    pub fn spell_slots_max_for_slot(&self, slot_idx: usize) -> u8 {
+        let level = self
+            .active_character
+            .as_ref()
+            .map(|c| crate::utils::level_from_xp(c.experience_pts))
+            .unwrap_or(1);
+
+        if !self.char_spell_slots.is_empty() {
+            self.char_spell_slots
+                .get((level as usize).saturating_sub(1))
+                .and_then(|row| row.get(slot_idx))
+                .copied()
+                .unwrap_or(0)
+        } else {
+            crate::utils::spell_slots_max(&self.char_caster_progression, level, slot_idx)
+        }
     }
 
     /// The ability that governs spellcasting for the character's class.
@@ -842,32 +854,291 @@ impl App {
             .unwrap_or_else(|| format!("Spell #{spell_id}"))
     }
 
-    /// Checks all current class features and ensures any "always prepared" spells
+    /// Ensures any "always prepared" spells from class/subclass additional_spells (API data)
     /// are present in the character's spell list and marked as prepared.
+    /// Falls back to interpreting class features text for older editions.
     pub fn sync_always_prepared_spells(&mut self) {
-        let mut to_add = Vec::new();
+        let char_level = self
+            .active_character
+            .as_ref()
+            .map(|c| crate::utils::level_from_xp(c.experience_pts))
+            .unwrap_or(1);
 
+        // Collect (spell_id, source_name) pairs
+        let mut to_add: Vec<(i32, String)> = Vec::new();
+
+        // Parse class and subclass additional_spells from the API response
+        if let Some(detail) = &self.class_detail.clone() {
+            // Class-level additional_spells (e.g. XPHB Paladin: Divine Smite at 2, Find Steed at 5)
+            if let Some(additional) = &detail.class.additional_spells {
+                Self::collect_additional_spells(
+                    additional,
+                    char_level,
+                    &self.all_spells,
+                    &detail.class.name,
+                    &mut to_add,
+                );
+            }
+
+            // Subclass-level additional_spells (oath/domain/circle spells)
+            // Only include spells from the character's chosen subclass
+            let subclass_name_lower = self.char_subclass_name.to_lowercase();
+            for swf in &detail.subclasses {
+                let matches = !subclass_name_lower.is_empty()
+                    && (swf.subclass.name.to_lowercase() == subclass_name_lower
+                        || swf.subclass.short_name.to_lowercase() == subclass_name_lower);
+                if matches {
+                    // PHB format: subclass.additional_spells JSON
+                    if let Some(additional) = &swf.subclass.additional_spells {
+                        Self::collect_additional_spells(
+                            additional,
+                            char_level,
+                            &self.all_spells,
+                            &swf.subclass.name,
+                            &mut to_add,
+                        );
+                    }
+                    // XPHB format: subclass features with spell tables (e.g. "Oath of Glory Spells")
+                    Self::collect_spells_from_subclass_features(
+                        &swf.features,
+                        char_level,
+                        &self.all_spells,
+                        &swf.subclass.name,
+                        &mut to_add,
+                    );
+                }
+            }
+        }
+
+        // Also check class features text for "always have the X spell prepared" (legacy fallback)
         for feature in &self.char_class_features {
             if let crate::models::features::Feature::GrantsSpell { spell_name } =
                 feature.interpret()
             {
-                // Find this spell in the compendium (lenient name matching)
                 let target_name = spell_name.to_lowercase();
                 if let Some(spell) = self.all_spells.iter().find(|s| {
                     let s_name = s.name.to_lowercase();
                     s_name == target_name || s_name.starts_with(&format!("{} ", target_name))
                 }) {
-                    // Check if character already has it
-                    if !self.char_spells.iter().any(|cs| cs.spell_id == spell.id) {
-                        to_add.push(spell.id);
-                    } else if let Some(cs) = self
-                        .char_spells
-                        .iter_mut()
-                        .find(|cs| cs.spell_id == spell.id)
-                    {
-                        // Ensure it is prepared if already present
-                        cs.is_prepared = true;
+                    if !to_add.iter().any(|(id, _)| *id == spell.id) {
+                        to_add.push((spell.id, self.char_class_name.clone()));
                     }
+                }
+            }
+        }
+
+        // Apply: add missing spells and mark existing as prepared
+        for (spell_id, source_name) in &to_add {
+            if !self.char_spells.iter().any(|cs| cs.spell_id == *spell_id) {
+                let character_id = self.active_character.as_ref().map(|c| c.id);
+                if let Some(cid) = character_id {
+                    let rt = self.rt.clone();
+                    let req = crate::models::character::AddSpellRequest {
+                        spell_id: *spell_id,
+                        is_prepared: Some(true),
+                    };
+                    match rt.block_on(self.client.add_spell(cid, &req)) {
+                        Ok(cs) => self.char_spells.push(cs),
+                        Err(_) => {
+                            self.char_spells.push(crate::models::character::CharacterSpell {
+                                character_id: cid,
+                                spell_id: *spell_id,
+                                is_prepared: true,
+                            });
+                        }
+                    }
+                }
+                self.spell_sources.insert(*spell_id, source_name.clone());
+            } else if let Some(cs) = self.char_spells.iter_mut().find(|cs| cs.spell_id == *spell_id)
+            {
+                cs.is_prepared = true;
+                self.spell_sources.insert(*spell_id, source_name.clone());
+            }
+        }
+
+        // Persist subclass name to cache if we have one
+        if !self.char_subclass_name.is_empty() {
+            self.persist_subclass_to_cache();
+        }
+    }
+
+    /// Parse additional_spells JSON (from class or subclass) and collect (spell_id, source_name)
+    /// pairs of spells that should be always prepared/known at the given character level.
+    ///
+    /// additional_spells format:
+    /// ```json
+    /// [{"prepared": {"2": ["divine smite|xphb"], "5": ["find steed|xphb"]}}]
+    /// ```
+    fn collect_additional_spells(
+        additional: &serde_json::Value,
+        char_level: i32,
+        all_spells: &[crate::models::compendium::Spell],
+        source_name: &str,
+        out: &mut Vec<(i32, String)>,
+    ) {
+        let arr = match additional.as_array() {
+            Some(a) => a,
+            None => return,
+        };
+        for entry in arr {
+            let obj = match entry.as_object() {
+                Some(o) => o,
+                None => continue,
+            };
+            for (_key, level_map) in obj {
+                let level_map_obj = match level_map.as_object() {
+                    Some(o) => o,
+                    None => continue,
+                };
+                for (level_str, spell_names) in level_map_obj {
+                    let required_level: i32 = match level_str.parse::<i32>() {
+                        Ok(l) => l,
+                        Err(_) => continue,
+                    };
+                    if required_level > char_level {
+                        continue;
+                    }
+                    let names_arr = match spell_names.as_array() {
+                        Some(a) => a,
+                        None => continue,
+                    };
+                    for name_val in names_arr {
+                        let raw_name = match name_val.as_str() {
+                            Some(s) => s,
+                            None => continue,
+                        };
+                        let spell_name = raw_name.split('|').next().unwrap_or(raw_name).trim();
+                        if let Some(spell) = all_spells.iter().find(|s| {
+                            s.name.eq_ignore_ascii_case(spell_name)
+                        }) {
+                            if !out.iter().any(|(id, _)| *id == spell.id) {
+                                out.push((spell.id, source_name.to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Parse subclass features for spell-granting entries (XPHB 2024 format).
+    /// Looks for features named like "{Subclass} Spells" that contain a table of spells.
+    /// Handles nested entry structures and both `,` and `•` (U+2022) as spell separators.
+    fn collect_spells_from_subclass_features(
+        features: &[crate::models::compendium::SubclassFeature],
+        char_level: i32,
+        all_spells: &[crate::models::compendium::Spell],
+        source_name: &str,
+        out: &mut Vec<(i32, String)>,
+    ) {
+        for feature in features {
+            let name_lower = feature.name.to_lowercase();
+
+            // Skip features that don't grant spells (e.g. flavor text, abilities)
+            if !name_lower.contains("spells") && !name_lower.contains("domain")
+                && !name_lower.contains("circle")
+            {
+                continue;
+            }
+
+            let entries = match &feature.entries {
+                Some(e) => e,
+                None => continue,
+            };
+
+            // Flatten all nested entries to find tables at any depth
+            let mut tables: Vec<Vec<(String, String)>> = Vec::new();
+            Self::collect_tables_from_entries(entries, &mut tables);
+
+            for rows in &tables {
+                for (level_str, spells_str) in rows {
+                    let level_num = level_str
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit())
+                        .collect::<String>()
+                        .parse::<i32>()
+                        .unwrap_or(0);
+                    if level_num == 0 || level_num > char_level {
+                        continue;
+                    }
+                    Self::add_spell_names(spells_str, all_spells, source_name, out);
+                }
+            }
+        }
+    }
+
+    /// Recursively walk JSON entries and collect all (level, spells) pairs from tables.
+    fn collect_tables_from_entries(
+        entries: &[serde_json::Value],
+        out: &mut Vec<Vec<(String, String)>>,
+    ) {
+        for entry in entries {
+            match entry {
+                serde_json::Value::Object(obj) => {
+                    if obj.get("type").and_then(|t| t.as_str()) == Some("table") {
+                        if let Some(rows) = obj.get("rows").and_then(|r| r.as_array()) {
+                            let mut pairs = Vec::new();
+                            for row in rows {
+                                if let Some(arr) = row.as_array() {
+                                    if arr.len() >= 2 {
+                                        let level_s = arr[0].as_str().unwrap_or("");
+                                        let spells_val = &arr[1];
+                                        let spells_s = match spells_val {
+                                            serde_json::Value::String(s) => s.clone(),
+                                            serde_json::Value::Array(a) => {
+                                                a.iter()
+                                                    .filter_map(|v| v.as_str())
+                                                    .collect::<Vec<_>>()
+                                                    .join("•")
+                                            }
+                                            _ => String::new(),
+                                        };
+                                        if !level_s.is_empty() && !spells_s.is_empty() {
+                                            pairs.push((level_s.to_string(), spells_s));
+                                        }
+                                    }
+                                }
+                            }
+                            if !pairs.is_empty() {
+                                out.push(pairs);
+                            }
+                        }
+                    }
+                    // Recurse into sub-entries (5etools often nests: entries → entries → table)
+                    if let Some(sub) = obj.get("entries") {
+                        if let Some(arr) = sub.as_array() {
+                            Self::collect_tables_from_entries(arr, out);
+                        }
+                    }
+                    // Also check for items (type: "list" often has refs to spells)
+                    if let Some(items) = obj.get("items") {
+                        if let Some(arr) = items.as_array() {
+                            Self::collect_tables_from_entries(arr, out);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Split a spell-name string by `,` or `•` (U+2022) and add matching spells.
+    fn add_spell_names(
+        raw: &str,
+        all_spells: &[crate::models::compendium::Spell],
+        source_name: &str,
+        out: &mut Vec<(i32, String)>,
+    ) {
+        for part in raw.split(|c| c == ',' || c == '•') {
+            let spell_name = part.trim().split('|').next().unwrap_or(part.trim()).trim();
+            if spell_name.is_empty() {
+                continue;
+            }
+            if let Some(spell) = all_spells.iter().find(|s| {
+                s.name.eq_ignore_ascii_case(spell_name)
+            }) {
+                if !out.iter().any(|(id, _)| *id == spell.id) {
+                    out.push((spell.id, source_name.to_string()));
                 }
             }
         }
@@ -910,19 +1181,11 @@ impl App {
     }
 
     pub fn always_prepared_spell_ids(&self) -> Vec<i32> {
-        let mut ids = Vec::new();
-        for feature in &self.char_class_features {
-            if let crate::models::features::Feature::GrantsSpell { spell_name } = feature.interpret() {
-                let target_name = spell_name.to_lowercase();
-                if let Some(spell) = self.all_spells.iter().find(|s| {
-                    let s_name = s.name.to_lowercase();
-                    s_name == target_name || s_name.starts_with(&format!("{} ", target_name))
-                }) {
-                    ids.push(spell.id);
-                }
-            }
-        }
-        ids
+        self.spell_sources
+            .iter()
+            .filter(|(_, src)| src.as_str() != "Spellbook")
+            .map(|(id, _)| *id)
+            .collect()
     }
 
     pub fn spellcasting_classes(&self) -> Vec<(String, i32, i32, i32)> {
@@ -951,10 +1214,6 @@ impl App {
                 true
             })
             .collect()
-    }
-
-    pub fn sync_resource_limits(&mut self) {
-        // Implementation for syncing resource limits based on level/class
     }
 
     pub fn toggle_proficiency(&mut self, category: &str, name: &str) {

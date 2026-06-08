@@ -2,6 +2,53 @@ use crate::app::App;
 use crate::models::app_state::ActionsSubTab;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+/// Compute the list length for the current actions sub-tab (cached).
+fn actions_list_len(app: &mut App) -> usize {
+    // Derive actions first, then use the cached reference
+    if app.cached_actions.is_none() {
+        let derived = app.derive_actions();
+        app.cached_actions = Some(derived);
+    }
+    
+    let local = app.cached_actions.as_ref().unwrap();
+    let sub_tab = app.actions_sub_tab;
+    
+    match &app.char_actions {
+        Some(actions) => match sub_tab {
+            ActionsSubTab::All => {
+                let mut count = actions.all.len();
+                for la in local {
+                    if !actions.all.iter().any(|a| a.name == la.name) {
+                        count += 1;
+                    }
+                }
+                count
+            }
+            ActionsSubTab::Attack => {
+                let mut count = actions.attack.len();
+                for la in local {
+                    if !actions.attack.iter().any(|a| a.name == la.name) {
+                        count += 1;
+                    }
+                }
+                count
+            }
+            ActionsSubTab::Action => actions.action.len(),
+            ActionsSubTab::BonusAction => actions.bonus_action.len(),
+            ActionsSubTab::Reaction => actions.reaction.len(),
+            ActionsSubTab::Other => actions.other.len(),
+            ActionsSubTab::LimitedUse => actions.limited_use.len(),
+        },
+        None => {
+            if sub_tab == ActionsSubTab::Attack || sub_tab == ActionsSubTab::All {
+                local.len()
+            } else {
+                0
+            }
+        }
+    }
+}
+
 pub fn handle_actions_key(app: &mut App, key: KeyEvent) {
     // If a detail modal is open, any key closes it
     if app.actions_detail_modal.is_some() {
@@ -48,43 +95,7 @@ pub fn handle_actions_key(app: &mut App, key: KeyEvent) {
         }
         // Up/Down: row selection across all sub-tabs
         KeyCode::Up => {
-            let len = match &app.char_actions {
-                Some(actions) => match app.actions_sub_tab {
-                    ActionsSubTab::All => {
-                        let mut count = actions.all.len();
-                        let local = app.derive_actions();
-                        for la in local {
-                            if !actions.all.iter().any(|a| a.name == la.name) {
-                                count += 1;
-                            }
-                        }
-                        count
-                    }
-                    ActionsSubTab::Attack => {
-                        let mut count = actions.attack.len();
-                        let local = app.derive_actions();
-                        for la in local {
-                            if !actions.attack.iter().any(|a| a.name == la.name) {
-                                count += 1;
-                            }
-                        }
-                        count
-                    }
-                    ActionsSubTab::Action => actions.action.len(),
-                    ActionsSubTab::BonusAction => actions.bonus_action.len(),
-                    ActionsSubTab::Reaction => actions.reaction.len(),
-                    ActionsSubTab::Other => actions.other.len(),
-                    ActionsSubTab::LimitedUse => actions.limited_use.len(),
-                },
-                None => {
-                    if app.actions_sub_tab == ActionsSubTab::Attack || app.actions_sub_tab == ActionsSubTab::All {
-                        app.derive_actions().len()
-                    } else {
-                        0
-                    }
-                }
-            };
-            
+            let len = actions_list_len(app);
             let cur = app.actions_list_state.selected().unwrap_or(0);
             if len > 0 {
                 let prev = if cur == 0 { len - 1 } else { cur - 1 };
@@ -92,43 +103,7 @@ pub fn handle_actions_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Down => {
-            let len = match &app.char_actions {
-                Some(actions) => match app.actions_sub_tab {
-                    ActionsSubTab::All => {
-                        let mut count = actions.all.len();
-                        let local = app.derive_actions();
-                        for la in local {
-                            if !actions.all.iter().any(|a| a.name == la.name) {
-                                count += 1;
-                            }
-                        }
-                        count
-                    }
-                    ActionsSubTab::Attack => {
-                        let mut count = actions.attack.len();
-                        let local = app.derive_actions();
-                        for la in local {
-                            if !actions.attack.iter().any(|a| a.name == la.name) {
-                                count += 1;
-                            }
-                        }
-                        count
-                    }
-                    ActionsSubTab::Action => actions.action.len(),
-                    ActionsSubTab::BonusAction => actions.bonus_action.len(),
-                    ActionsSubTab::Reaction => actions.reaction.len(),
-                    ActionsSubTab::Other => actions.other.len(),
-                    ActionsSubTab::LimitedUse => actions.limited_use.len(),
-                },
-                None => {
-                    if app.actions_sub_tab == ActionsSubTab::Attack || app.actions_sub_tab == ActionsSubTab::All {
-                        app.derive_actions().len()
-                    } else {
-                        0
-                    }
-                }
-            };
-
+            let len = actions_list_len(app);
             let cur = app.actions_list_state.selected().unwrap_or(0);
             if len > 0 {
                 app.actions_list_state.select(Some((cur + 1) % len));

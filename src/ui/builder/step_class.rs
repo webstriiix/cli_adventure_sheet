@@ -208,9 +208,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Enter => {
             if let Some(idx) = app.builder.list_state.selected() {
-                if let Some(_class) = app.classes.get(idx) {
+                if let Some(selected_class) = app.classes.get(idx) {
                     // Class selected, figure out routing and state
-                    let selected_class = &app.classes[app.builder.list_state.selected().unwrap()];
                     app.builder.class_id = Some(selected_class.id);
 
                     // Default to none unless we see a caster progression

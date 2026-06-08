@@ -217,6 +217,21 @@ pub struct PatchCharacterClassRequest {
     pub subclass_id: Option<i32>,
 }
 
+/// Response from GET /characters/{id}/classes — includes subclass details.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharacterClassResponse {
+    pub class_id: i32,
+    pub class_name: String,
+    pub class_source: String,
+    pub level: i32,
+    #[serde(default)]
+    pub is_primary: bool,
+    pub subclass_id: Option<i32>,
+    pub subclass_name: Option<String>,
+    pub subclass_short_name: Option<String>,
+    pub subclass_source: Option<String>,
+}
+
 // ── Character Feats ──
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -19,6 +19,11 @@ pub struct Class {
     pub starting_equipment: JsonValue,
     pub multiclass_requirements: Option<JsonValue>,
     pub class_table: Option<Vec<JsonValue>>,
+    /// 2D array of spell slots: spell_slots[character_level - 1][spell_level_index] = max slots.
+    #[serde(default)]
+    pub spell_slots: Option<Vec<Vec<i32>>>,
+    /// Always-prepared/known/innate spells granted by class features.
+    pub additional_spells: Option<JsonValue>,
     pub subclass_title: Option<String>,
     pub edition: Option<String>,
 }
@@ -45,6 +50,9 @@ pub struct Subclass {
     pub unlock_level: i32,
     pub fluff_text: Option<String>,
     pub fluff_image_url: Option<String>,
+    /// Always-prepared/known/innate spells granted by this subclass (oath/domain/circle spells).
+    #[serde(default)]
+    pub additional_spells: Option<JsonValue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

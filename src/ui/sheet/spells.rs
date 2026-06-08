@@ -1,6 +1,5 @@
 use crate::app::App;
 use crate::models::compendium::Spell;
-use crate::utils::spell_slots_max;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Rect},
@@ -21,7 +20,7 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
 
     let level = crate::utils::level_from_xp(character.experience_pts);
     let caster_prog = app.char_caster_progression.clone();
-    let is_caster = (0..9).any(|i| spell_slots_max(&caster_prog, level, i) > 0);
+    let is_caster = (0..9).any(|i| app.spell_slots_max_for_slot(i) > 0);
 
     // Determine how many header rows we need
     let stats_height = 4u16; // bordered boxes for modifier/attack/dc
@@ -81,7 +80,9 @@ fn render_stats(app: &App, frame: &mut Frame, area: Rect) {
     let dc_values: Vec<String> = classes.iter().map(|(_, _, _, d)| d.to_string()).collect();
 
     // Prepared count: show (current / max)
-    let character = app.active_character.as_ref().unwrap();
+    let Some(character) = app.active_character.as_ref() else {
+        return;
+    };
     let level = crate::utils::level_from_xp(character.experience_pts);
     let always_prepared = app.always_prepared_spell_ids();
     let prepared_current = app
@@ -136,7 +137,7 @@ fn render_stats(app: &App, frame: &mut Frame, area: Rect) {
     }
 }
 
-fn render_slots(app: &App, frame: &mut Frame, area: Rect, caster_prog: &str, level: i32) {
+fn render_slots(app: &App, frame: &mut Frame, area: Rect, _caster_prog: &str, _level: i32) {
     let label_style = Style::default().fg(Color::DarkGray);
     let used_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
     let avail_style = Style::default().fg(Color::Cyan);
@@ -146,7 +147,7 @@ fn render_slots(app: &App, frame: &mut Frame, area: Rect, caster_prog: &str, lev
     ];
 
     for slot_idx in 0..9 {
-        let max = spell_slots_max(caster_prog, level, slot_idx);
+        let max = app.spell_slots_max_for_slot(slot_idx);
         if max == 0 {
             continue;
         }
@@ -219,14 +220,15 @@ fn render_spell_list(app: &mut App, frame: &mut Frame, area: Rect) {
         return;
     }
 
-    // Build a sorted list of (level, spell_data, char_spell) tuples
-    let spell_entries: Vec<(i32, &Spell, bool, bool)> = app
+    // Build a sorted list of (level, spell_data, char_spell, source) tuples
+    let spell_entries: Vec<(i32, &Spell, bool, bool, String)> = app
         .char_spells_filtered()
         .into_iter()
-        .map(|cs| {
-            let spell = app.all_spells.iter().find(|s| s.id == cs.spell_id).unwrap();
+        .filter_map(|cs| {
+            let spell = app.all_spells.iter().find(|s| s.id == cs.spell_id)?;
             let is_conc = app.concentrating_on == Some(cs.spell_id);
-            (spell.level, spell, cs.is_prepared, is_conc)
+            let source = app.spell_sources.get(&spell.id).cloned().unwrap_or_else(|| "Spellbook".to_string());
+            Some((spell.level, spell, cs.is_prepared, is_conc, source))
         })
         .collect();
 
@@ -240,13 +242,12 @@ fn render_spell_list(app: &mut App, frame: &mut Frame, area: Rect) {
     // spell_index_to_table_row[i] = table row index for the i-th filtered spell
     let mut spell_index_to_table_row: Vec<usize> = Vec::new();
 
-    for (_spell_idx, (lvl, spell, is_prepared, is_conc)) in spell_entries.iter().enumerate() {
+    for (_spell_idx, (lvl, spell, is_prepared, is_conc, source)) in spell_entries.iter().enumerate() {
         // Insert level group header if level changed
         if current_level != Some(*lvl) {
             current_level = Some(*lvl);
-            let header_label = level_group_label(*lvl);
             rows.push(
-                Row::new(vec![header_label, String::new(), String::new(), String::new(), String::new(), String::new()])
+                Row::new(vec![level_group_label(*lvl), String::new(), String::new(), String::new(), String::new(), String::new(), String::new()])
                     .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
                     .bottom_margin(0),
             );
@@ -258,6 +259,7 @@ fn render_spell_list(app: &mut App, frame: &mut Frame, area: Rect) {
                     "Range".to_string(),
                     "Hit / DC".to_string(),
                     "Effect".to_string(),
+                    "Source".to_string(),
                     "Notes".to_string(),
                 ])
                 .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
@@ -287,7 +289,7 @@ fn render_spell_list(app: &mut App, frame: &mut Frame, area: Rect) {
         };
 
         rows.push(
-            Row::new(vec![name, time, range, hit_dc, effect, notes])
+            Row::new(vec![name, time, range, hit_dc, effect, source.clone(), notes])
                 .style(Style::default().fg(base_color)),
         );
     }
@@ -298,6 +300,7 @@ fn render_spell_list(app: &mut App, frame: &mut Frame, area: Rect) {
         Constraint::Length(8),     // Range
         Constraint::Length(8),     // Hit / DC
         Constraint::Length(10),    // Effect
+        Constraint::Length(12),    // Source
         Constraint::Min(12),       // Notes
     ];
 

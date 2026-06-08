@@ -476,11 +476,18 @@ pub fn handle_level_up_choice_key(app: &mut App, key: KeyEvent) {
                         let subclass_id = swf.subclass.id;
                         let subclass_name = swf.subclass.name.clone();
                         if cid == app.active_class_id {
-                            app.patch_primary_class(None, Some(subclass_id));
+                            // Use actual character level from XP, not stale char_classes level
+                            let char_level = app.active_character
+                                .as_ref()
+                                .map(|c| crate::utils::level_from_xp(c.experience_pts));
+                            app.patch_primary_class(char_level, Some(subclass_id));
                             app.char_subclass_name = subclass_name.clone();
+                            // Refresh subclass features so they appear immediately
+                            app.refresh_subclass_features();
                         } else {
                             app.set_multiclass_subclass(cid, subclass_id);
                         }
+                        app.persist_subclass_to_cache();
                         app.status_msg = format!("Subclass set: {}", subclass_name);
                     }
                     app.picker_selected = 0;
@@ -532,14 +539,8 @@ pub fn handle_level_up_choice_key(app: &mut App, key: KeyEvent) {
                     _ => {}
                 }
             } else {
-                // ASI selection mode
+                // ASI selection mode (+1/+1 only)
                 match key.code {
-                    KeyCode::Char('a') => {
-                        app.asi_mode = crate::app::AsiMode::PlusOneTwo;
-                    }
-                    KeyCode::Char('s') => {
-                        app.asi_mode = crate::app::AsiMode::PlusOneThree;
-                    }
                     KeyCode::Char('f') | KeyCode::Char('F') => {
                         // Switch to feat picker
                         app.picker_search.clear();
@@ -579,13 +580,6 @@ pub fn handle_level_up_choice_key(app: &mut App, key: KeyEvent) {
                                     app.asi_ability_b = max_idx - 1;
                                 }
                             }
-                            2 => {
-                                if app.asi_ability_c > 0 {
-                                    app.asi_ability_c -= 1;
-                                } else {
-                                    app.asi_ability_c = max_idx - 1;
-                                }
-                            }
                             _ => {}
                         }
                     }
@@ -594,26 +588,17 @@ pub fn handle_level_up_choice_key(app: &mut App, key: KeyEvent) {
                         match app.asi_choice_index {
                             0 => app.asi_ability_a = (app.asi_ability_a + 1) % max_idx,
                             1 => app.asi_ability_b = (app.asi_ability_b + 1) % max_idx,
-                            2 => app.asi_ability_c = (app.asi_ability_c + 1) % max_idx,
                             _ => {}
                         }
                     }
                     KeyCode::Tab | KeyCode::Right => {
-                        let num_choices = match app.asi_mode {
-                            crate::app::AsiMode::PlusOneThree => 3,
-                            _ => 2,
-                        };
-                        app.asi_choice_index = (app.asi_choice_index + 1) % num_choices;
+                        app.asi_choice_index = (app.asi_choice_index + 1) % 2;
                     }
                     KeyCode::BackTab | KeyCode::Left => {
-                        let num_choices = match app.asi_mode {
-                            crate::app::AsiMode::PlusOneThree => 3,
-                            _ => 2,
-                        };
                         if app.asi_choice_index > 0 {
                             app.asi_choice_index -= 1;
                         } else {
-                            app.asi_choice_index = num_choices - 1;
+                            app.asi_choice_index = 1;
                         }
                     }
                     KeyCode::Enter => {
