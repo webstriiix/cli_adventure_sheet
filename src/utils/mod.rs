@@ -49,10 +49,6 @@ pub fn format_modifier(m: i32) -> String {
     }
 }
 
-pub fn ability_name(index: usize) -> &'static str {
-    ABILITY_NAMES[index]
-}
-
 /// Returns the maximum number of prepared spells for a given class and level.
 /// Defaults to Level + Modifier for unknown classes, but uses the 2024 PHB fixed table for Paladins.
 pub fn max_prepared_spells(class_name: &str, level: i32, modifier: i32) -> i32 {
@@ -75,10 +71,6 @@ pub fn max_prepared_spells(class_name: &str, level: i32, modifier: i32) -> i32 {
         // Fallback for others (2014 style or generic)
         _ => level.max(1) + modifier,
     }
-}
-
-pub fn standard_array_value(index: usize) -> i32 {
-    STANDARD_ARRAY[index]
 }
 
 /// Returns the max spell slots for a given caster progression, level, and slot index (0=1st level).

@@ -135,12 +135,17 @@ impl App {
         // Verify and update local state with what backend actually saved
         let rt2 = self.rt.clone();
         if let Ok(classes) = rt2.block_on(self.client.get_character_classes(character_id)) {
-            if let Some(primary) = classes.iter().find(|c| c.is_primary) {
-                if let Some(cc) = self.char_classes.first_mut() {
-                    cc.subclass_id = primary.subclass_id;
-                    cc.level = primary.level;
-                }
-            }
+            self.char_classes = classes
+                .iter()
+                .map(|ccr| CharacterClass {
+                    id: 0,
+                    character_id,
+                    class_id: ccr.class_id,
+                    level: ccr.level,
+                    is_primary: ccr.is_primary,
+                    subclass_id: ccr.subclass_id,
+                })
+                .collect();
         }
     }
 

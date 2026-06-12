@@ -29,15 +29,12 @@ pub enum CharacterCreationStep {
     Summary,
     /// Triggered when the currently-pending feat grants weapon masteries.
     FeatWeaponMastery,
-    /// Triggered when the currently-pending feat grants skill proficiency choices.
-    FeatSkillChoice,
 }
 
 pub struct BuilderState {
     pub step: CharacterCreationStep,
     pub name: String,
     pub race_id: Option<i32>,
-    pub subrace_id: Option<i32>,
     pub class_id: Option<i32>,
     pub subclass_id: Option<i32>,
     pub bg_id: Option<i32>,
@@ -65,18 +62,13 @@ pub struct BuilderState {
     pub ability_mode: AbilityMode,
     pub ability_focus: usize,
     pub standard_pool: Vec<bool>,
-    pub point_buy_points: i32,
 
     // Proficiencies & Choices
     pub skill_choices: Vec<String>,
-    pub tool_choices: Vec<String>,
-    pub language_choices: Vec<String>,
 
     // Equipment & Spells
     pub equipment_option: Option<usize>, // 0 for starting equip, 1 for gold
-    pub starting_gold: i32,
     pub known_spells: Vec<i32>,
-    pub prepared_spells: Vec<i32>,
 
     // Details
     pub age: String,
@@ -98,8 +90,6 @@ pub struct BuilderState {
     pub list_state: ListState,
     pub alignment_list_state: ListState,
     pub focus_index: usize,
-    pub text_buffers: [String; 10], // for details input
-    pub summary_scroll: usize,
 }
 
 impl Default for BuilderState {
@@ -108,7 +98,6 @@ impl Default for BuilderState {
             step: CharacterCreationStep::Race,
             name: String::new(),
             race_id: None,
-            subrace_id: None,
             class_id: None,
             subclass_id: None,
             bg_id: None,
@@ -127,14 +116,9 @@ impl Default for BuilderState {
             ability_mode: AbilityMode::StandardArray,
             ability_focus: 0,
             standard_pool: vec![true; 6],
-            point_buy_points: 27,
             skill_choices: Vec::new(),
-            tool_choices: Vec::new(),
-            language_choices: Vec::new(),
             equipment_option: None,
-            starting_gold: 0,
             known_spells: Vec::new(),
-            prepared_spells: Vec::new(),
             age: String::new(),
             height: String::new(),
             weight: String::new(),
@@ -150,8 +134,6 @@ impl Default for BuilderState {
             list_state: ListState::default().with_selected(Some(0)),
             alignment_list_state: ListState::default().with_selected(Some(0)),
             focus_index: 0,
-            text_buffers: Default::default(),
-            summary_scroll: 0,
         }
     }
 }
@@ -206,6 +188,7 @@ pub enum EditSection {
     Fields,        // text fields (name, xp, hp, abilities)
     Race,          // race picker list
     Class,         // class picker list
+    Subclass,      // subclass picker list
     Background,    // background picker list
     Multiclass,    // multiclass manager
     LevelUpChoice, // ASI / subclass prompt triggered by XP change
@@ -243,10 +226,6 @@ impl SheetTab {
             SheetTab::Background => "Background",
             SheetTab::Notes => "Notes",
         }
-    }
-
-    pub fn index(self) -> usize {
-        Self::ALL.iter().position(|&t| t == self).unwrap_or(0)
     }
 }
 

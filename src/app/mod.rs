@@ -57,7 +57,6 @@ pub struct App {
     pub auth_mode: AuthMode,
     pub auth_fields: [String; 3],
     pub auth_focus: usize,
-    pub password_visible: bool,
 
     // Compendium data
     pub classes: Vec<Class>,
@@ -179,9 +178,11 @@ pub struct App {
     pub edit_buffers: [String; 13], // text buffers: [name, xp, level, max_hp, cur_hp, temp_hp, str, dex, con, int, wis, cha, inspiration]
     pub edit_race_index: usize,
     pub edit_class_index: usize,
+    pub edit_subclass_index: usize,
     pub edit_bg_index: usize,
     pub edit_race_state: ListState,
     pub edit_class_state: ListState,
+    pub edit_subclass_state: ListState,
     pub edit_bg_state: ListState,
     pub edit_section: EditSection, // which section of the form is active
 
@@ -219,7 +220,6 @@ impl App {
             auth_mode: AuthMode::Login,
             auth_fields: [String::new(), String::new(), String::new()],
             auth_focus: 0,
-            password_visible: false,
 
             classes: Vec::new(),
             races: Vec::new(),
@@ -309,9 +309,11 @@ impl App {
             edit_buffers: Default::default(),
             edit_race_index: 0,
             edit_class_index: 0,
+            edit_subclass_index: 0,
             edit_bg_index: 0,
             edit_race_state: ListState::default().with_selected(Some(0)),
             edit_class_state: ListState::default().with_selected(Some(0)),
+            edit_subclass_state: ListState::default().with_selected(Some(0)),
             edit_bg_state: ListState::default().with_selected(Some(0)),
             edit_section: EditSection::Fields,
 

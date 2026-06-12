@@ -401,19 +401,6 @@ impl ApiClient {
         }
     }
 
-    pub async fn save_race_option(
-        &self,
-        character_id: Uuid,
-        req: &crate::models::RaceOptionSelectionRequest,
-    ) -> Result<crate::models::CharacterRaceOption, ApiError> {
-        let resp = self
-            .auth_post(&format!("/characters/{character_id}/race-options"))
-            .json(req)
-            .send()
-            .await?;
-        self.handle_response(resp).await
-    }
-
     // ── Proficiencies ──
 
     pub async fn get_proficiencies(

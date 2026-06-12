@@ -1,5 +1,5 @@
 use crate::models::{
-    Background, Class, ClassDetailResponse, Feat, Item, Monster, OptionalFeature, Race, Spell,
+    Background, Class, ClassDetailResponse, Feat, Item, Race, Spell,
 };
 
 use super::{ApiClient, ApiError};
@@ -65,22 +65,6 @@ impl ApiClient {
         self.handle_response(resp).await
     }
 
-    pub async fn get_monsters(
-        &self,
-        name: Option<&str>,
-        source: Option<&str>,
-    ) -> Result<Vec<Monster>, ApiError> {
-        let mut req = self.http.get(self.url("/monsters"));
-        if let Some(n) = name {
-            req = req.query(&[("name", n)]);
-        }
-        if let Some(s) = source {
-            req = req.query(&[("source", s)]);
-        }
-        let resp = req.send().await?;
-        self.handle_response(resp).await
-    }
-
     pub async fn get_races(
         &self,
         name: Option<&str>,
@@ -119,39 +103,6 @@ impl ApiClient {
             req = req.query(&[("name", n)]);
         }
         let resp = req.send().await?;
-        self.handle_response(resp).await
-    }
-
-    pub async fn get_optional_features(
-        &self,
-        name: Option<&str>,
-        source: Option<&str>,
-        feature_type: Option<&str>,
-    ) -> Result<Vec<OptionalFeature>, ApiError> {
-        let mut req = self.http.get(self.url("/optional-features"));
-        if let Some(n) = name {
-            req = req.query(&[("name", n)]);
-        }
-        if let Some(s) = source {
-            req = req.query(&[("source", s)]);
-        }
-        if let Some(ft) = feature_type {
-            req = req.query(&[("feature_type", ft)]);
-        }
-        let resp = req.send().await?;
-        self.handle_response(resp).await
-    }
-
-    pub async fn get_race_options(
-        &self,
-        name: &str,
-        source: &str,
-    ) -> Result<Vec<crate::models::RaceOption>, ApiError> {
-        let resp = self
-            .http
-            .get(self.url(&format!("/races/{name}/{source}/options")))
-            .send()
-            .await?;
         self.handle_response(resp).await
     }
 

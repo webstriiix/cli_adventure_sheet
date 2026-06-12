@@ -175,12 +175,6 @@ impl App {
         }
     }
 
-    /// True if `level` is an ASI/Feat milestone for this character's class.
-    pub fn is_asi_level(&self, level: i32) -> bool {
-        let class_name = &self.char_class_name;
-        Self::asi_levels_for_class(class_name).contains(&level)
-    }
-
     /// Filter feats by search string and optionally by character prerequisites.
     pub fn filtered_feats(
         &self,

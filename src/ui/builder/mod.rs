@@ -11,7 +11,6 @@ pub mod step_background_feat;
 pub mod step_class;
 pub mod step_details;
 pub mod step_equipment;
-pub mod step_feat_skill;
 pub mod step_languages;
 pub mod step_proficiencies;
 pub mod step_race;
@@ -40,7 +39,6 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         CharacterCreationStep::Summary => step_summary::render(app, frame),
         CharacterCreationStep::BackgroundFeat => step_background_feat::render(app, frame),
         CharacterCreationStep::FeatWeaponMastery => step_weapon_mastery::render(app, frame),
-        CharacterCreationStep::FeatSkillChoice => step_feat_skill::render(app, frame),
     }
 }
 
@@ -62,6 +60,5 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         CharacterCreationStep::Summary => step_summary::handle_key(app, key),
         CharacterCreationStep::BackgroundFeat => step_background_feat::handle_key(app, key),
         CharacterCreationStep::FeatWeaponMastery => step_weapon_mastery::handle_key(app, key),
-        CharacterCreationStep::FeatSkillChoice => step_feat_skill::handle_key(app, key),
     }
 }

@@ -39,16 +39,6 @@ impl App {
         self.edit_race_state = ListState::default();
         self.edit_race_state.select(Some(self.edit_race_index));
 
-        let current_class_id = self.active_class_id;
-
-        self.edit_class_index = self
-            .classes
-            .iter()
-            .position(|c| c.id == current_class_id)
-            .unwrap_or(0);
-        self.edit_class_state = ListState::default();
-        self.edit_class_state.select(Some(self.edit_class_index));
-
         self.edit_bg_index = if let Some(bg_id) = character.background_id {
             self.backgrounds
                 .iter()
@@ -59,6 +49,63 @@ impl App {
         };
         self.edit_bg_state = ListState::default();
         self.edit_bg_state.select(Some(self.edit_bg_index));
+
+        // Authoritative fetch of classes for this character to ensure subclass info is accurate
+        let rt = self.rt.clone();
+        if let Ok(classes) = rt.block_on(self.client.get_character_classes(character.id)) {
+            self.char_classes = classes
+                .iter()
+                .map(|ccr| CharacterClass {
+                    id: 0,
+                    character_id: character.id,
+                    class_id: ccr.class_id,
+                    level: ccr.level,
+                    is_primary: ccr.is_primary,
+                    subclass_id: ccr.subclass_id,
+                })
+                .collect();
+
+            // Sync active_class_id and try to pre-load class detail if there's a subclass
+            if let Some(primary) = classes.iter().find(|cc| cc.is_primary) {
+                self.active_class_id = primary.class_id;
+                let (name, source) = self
+                    .classes
+                    .iter()
+                    .find(|cl| cl.id == primary.class_id)
+                    .map(|cl| (cl.name.clone(), cl.source_slug.clone()))
+                    .unwrap_or_else(|| ("".to_string(), "".to_string()));
+
+                if !name.is_empty() {
+                    if let Ok(detail) = rt.block_on(self.client.get_class_detail(&name, &source)) {
+                        self.class_detail = Some(detail);
+                    }
+                }
+            }
+        }
+
+        // Initialize class picker index
+        let current_class_id = self.active_class_id;
+        self.edit_class_index = self
+            .classes
+            .iter()
+            .position(|c| c.id == current_class_id)
+            .unwrap_or(0);
+        self.edit_class_state = ListState::default();
+        self.edit_class_state.select(Some(self.edit_class_index));
+
+        // Initialize subclass picker index from fetched data
+        let current_subclass_id = self.char_classes.first().and_then(|cc| cc.subclass_id);
+        self.edit_subclass_index = self
+            .class_detail
+            .as_ref()
+            .and_then(|d| {
+                d.subclasses
+                    .iter()
+                    .position(|swf| Some(swf.subclass.id) == current_subclass_id)
+            })
+            .unwrap_or(0);
+        self.edit_subclass_state = ListState::default();
+        self.edit_subclass_state.select(Some(self.edit_subclass_index));
 
         self.multiclass_selected = 0;
         self.multiclass_section = crate::models::app_state::MulticlassSection::List;

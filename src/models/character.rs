@@ -126,6 +126,8 @@ pub struct UpdateCharacterRequest {
     #[serde(rename = "cha")]
     pub charisma: i32,
     pub max_hp: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subclass_id: Option<i32>,
     // Optional extras
     #[serde(skip_serializing_if = "Option::is_none")]
     pub race_id: Option<i32>,
@@ -172,6 +174,7 @@ impl UpdateCharacterRequest {
             wisdom: c.wisdom,
             charisma: c.charisma,
             max_hp: c.max_hp,
+            subclass_id: None, // usually set explicitly during update
             race_id: c.race_id,
             subrace_id: c.subrace_id,
             background_id: c.background_id,
@@ -305,22 +308,6 @@ pub struct UpdateInventoryRequest {
     pub is_attuned: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
-}
-
-// ── Race Options ──
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RaceOptionSelectionRequest {
-    pub race_option_id: i32,
-    pub selection: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CharacterRaceOption {
-    pub id: i32,
-    pub character_id: Uuid,
-    pub race_option_id: i32,
-    pub selection: serde_json::Value,
 }
 
 // ── Character Proficiencies ──

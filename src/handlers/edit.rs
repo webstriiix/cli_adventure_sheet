@@ -11,6 +11,7 @@ pub fn handle_edit_character_key(app: &mut App, key: KeyEvent) {
         EditSection::Fields => handle_edit_fields_key(app, key),
         EditSection::Race => handle_edit_race_key(app, key),
         EditSection::Class => handle_edit_class_key(app, key),
+        EditSection::Subclass => handle_edit_subclass_key(app, key),
         EditSection::Background => handle_edit_bg_key(app, key),
         EditSection::Multiclass => handle_edit_multiclass_key(app, key),
         EditSection::LevelUpChoice => handle_level_up_choice_key(app, key),
@@ -20,8 +21,8 @@ pub fn handle_edit_character_key(app: &mut App, key: KeyEvent) {
 pub fn handle_edit_fields_key(app: &mut App, key: KeyEvent) {
     // Field indices: 0=name, 1=xp, 2=level, 3=max_hp, 4=cur_hp, 5=temp_hp,
     //                6=str, 7=dex, 8=con, 9=int, 10=wis, 11=cha, 12=inspiration
-    // After field 12: Race(13), Class(14), Background(15), Multiclass(16)
-    const TOTAL_FIELDS: usize = 17; // 13 text fields + 3 list pickers + 1 multiclass manager
+    // After field 12: Race(13), Class(14), Subclass(15), Background(16), Multiclass(17)
+    const TOTAL_FIELDS: usize = 18; // 13 text fields + 4 list pickers + 1 multiclass manager
 
     match key.code {
         KeyCode::Esc => {
@@ -48,7 +49,7 @@ pub fn handle_edit_fields_key(app: &mut App, key: KeyEvent) {
             if app.edit_field_index >= 13 {
                 switch_edit_section(app);
             } else {
-                app.edit_field_index = (app.edit_field_index + 1) % 17;
+                app.edit_field_index = (app.edit_field_index + 1) % TOTAL_FIELDS;
                 switch_edit_section(app);
             }
         }
@@ -73,10 +74,35 @@ pub fn switch_edit_section(app: &mut App) {
     app.edit_section = match app.edit_field_index {
         13 => EditSection::Race,
         14 => EditSection::Class,
-        15 => EditSection::Background,
-        16 => EditSection::Multiclass,
+        15 => {
+            ensure_subclasses_loaded(app);
+            EditSection::Subclass
+        }
+        16 => EditSection::Background,
+        17 => EditSection::Multiclass,
         _ => EditSection::Fields,
     };
+}
+
+fn ensure_subclasses_loaded(app: &mut App) {
+    let class_id = app.classes.get(app.edit_class_index).map(|c| c.id).unwrap_or(0);
+    let needs_fetch = app.class_detail.as_ref().map(|d| d.class.id != class_id).unwrap_or(true);
+    
+    if needs_fetch && class_id != 0 {
+        let (name, source) = app.classes.get(app.edit_class_index)
+            .map(|c| (c.name.clone(), c.source_slug.clone()))
+            .unwrap();
+        let rt = app.rt.clone();
+        if let Ok(detail) = rt.block_on(app.client.get_class_detail(&name, &source)) {
+            // Update edit_subclass_index based on current character's subclass
+            let current_subclass_id = app.char_classes.first().and_then(|cc| cc.subclass_id);
+            app.edit_subclass_index = detail.subclasses.iter()
+                .position(|swf| Some(swf.subclass.id) == current_subclass_id)
+                .unwrap_or(0);
+            app.edit_subclass_state.select(Some(app.edit_subclass_index));
+            app.class_detail = Some(detail);
+        }
+    }
 }
 
 pub fn handle_edit_race_key(app: &mut App, key: KeyEvent) {
@@ -117,21 +143,60 @@ pub fn handle_edit_class_key(app: &mut App, key: KeyEvent) {
             if app.edit_class_index > 0 {
                 app.edit_class_index -= 1;
                 app.edit_class_state.select(Some(app.edit_class_index));
+                // Reset subclass when class changes
+                app.class_detail = None;
+                app.edit_subclass_index = 0;
+                app.edit_subclass_state.select(Some(0));
             }
         }
         KeyCode::Down => {
             if app.edit_class_index + 1 < app.classes.len() {
                 app.edit_class_index += 1;
                 app.edit_class_state.select(Some(app.edit_class_index));
+                // Reset subclass when class changes
+                app.class_detail = None;
+                app.edit_subclass_index = 0;
+                app.edit_subclass_state.select(Some(0));
             }
         }
         KeyCode::Tab => {
             app.edit_field_index = 15;
-            app.edit_section = EditSection::Background;
+            switch_edit_section(app);
         }
         KeyCode::BackTab => {
             app.edit_field_index = 13;
             app.edit_section = EditSection::Race;
+        }
+        _ => {}
+    }
+}
+
+pub fn handle_edit_subclass_key(app: &mut App, key: KeyEvent) {
+    let count = app.class_detail.as_ref().map(|d| d.subclasses.len()).unwrap_or(0);
+
+    match key.code {
+        KeyCode::Esc => {
+            app.edit_section = EditSection::Fields;
+        }
+        KeyCode::Up => {
+            if app.edit_subclass_index > 0 {
+                app.edit_subclass_index -= 1;
+                app.edit_subclass_state.select(Some(app.edit_subclass_index));
+            }
+        }
+        KeyCode::Down => {
+            if app.edit_subclass_index + 1 < count {
+                app.edit_subclass_index += 1;
+                app.edit_subclass_state.select(Some(app.edit_subclass_index));
+            }
+        }
+        KeyCode::Tab => {
+            app.edit_field_index = 16;
+            app.edit_section = EditSection::Background;
+        }
+        KeyCode::BackTab => {
+            app.edit_field_index = 14;
+            app.edit_section = EditSection::Class;
         }
         _ => {}
     }
@@ -155,12 +220,12 @@ pub fn handle_edit_bg_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Tab => {
-            app.edit_field_index = 16;
+            app.edit_field_index = 17;
             app.edit_section = EditSection::Multiclass;
         }
         KeyCode::BackTab => {
-            app.edit_field_index = 14;
-            app.edit_section = EditSection::Class;
+            app.edit_field_index = 15;
+            app.edit_section = EditSection::Subclass;
         }
         _ => {}
     }
@@ -170,7 +235,7 @@ pub fn handle_edit_multiclass_key(app: &mut App, key: KeyEvent) {
     match app.multiclass_section {
         MulticlassSection::List => match key.code {
             KeyCode::Esc | KeyCode::BackTab => {
-                app.edit_field_index = 15;
+                app.edit_field_index = 16;
                 app.edit_section = EditSection::Background;
             }
             KeyCode::Tab => {
@@ -281,9 +346,14 @@ pub fn save_edit_character(app: &mut App) {
         auto_max_hp.unwrap_or_else(|| parse_i32(&app.edit_buffers[3]).unwrap_or_default());
 
     let name = app.edit_buffers[0].trim().to_string();
+    let subclass_id = app.class_detail.as_ref().and_then(|d| {
+        d.subclasses.get(app.edit_subclass_index).map(|swf| swf.subclass.id)
+    });
+
     let req = UpdateCharacterRequest {
         name,
         class_id,
+        subclass_id,
         experience_pts: Some(new_xp),
         max_hp: computed_max_hp,
         current_hp: parse_i32(&app.edit_buffers[4]),
@@ -335,6 +405,14 @@ pub fn save_edit_character(app: &mut App) {
                 if auto_max_hp.is_some() {
                     app.edit_buffers[3] = updated.max_hp.to_string();
                 }
+
+                // Update local subclass state immediately from the server response
+                if let Some(cc) = app.char_classes.first_mut() {
+                    cc.subclass_id = subclass_id;
+                }
+                app.refresh_subclass_features();
+                app.persist_subclass_to_cache();
+
                 app.active_character = Some(updated);
                 app.refresh_derived_actions();
 

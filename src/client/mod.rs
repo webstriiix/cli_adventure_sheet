@@ -37,21 +37,12 @@ impl ApiClient {
         }
     }
 
-    pub fn with_base_url(mut self, base_url: &str) -> Self {
-        self.base_url = base_url.trim_end_matches('/').to_string();
-        self
-    }
-
     pub fn set_token(&mut self, token: String) {
         self.token = Some(token);
     }
 
     pub fn clear_token(&mut self) {
         self.token = None;
-    }
-
-    pub fn has_token(&self) -> bool {
-        self.token.is_some()
     }
 
     fn url(&self, path: &str) -> String {

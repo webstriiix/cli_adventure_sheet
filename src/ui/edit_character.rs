@@ -26,7 +26,9 @@ const F_CHA: usize = 11;
 const F_INSPIRATION: usize = 12;
 const F_RACE: usize = 13;
 const F_CLASS: usize = 14;
-const F_BG: usize = 15;
+const F_SUBCLASS: usize = 15;
+const F_BG: usize = 16;
+const F_MULTICLASS: usize = 17;
 
 pub fn render(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
@@ -61,6 +63,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         EditSection::Fields => "Tab/↑↓ move field  Enter next field  Ctrl+S or F2 save  Esc cancel",
         EditSection::Race => "↑↓ choose race  Tab next section  Esc back to fields",
         EditSection::Class => "↑↓ choose class  Tab next section  Esc back to fields",
+        EditSection::Subclass => "↑↓ choose subclass  Tab next section  Esc back to fields",
         EditSection::Background => "↑↓ choose background  Tab next section  Esc back to fields",
         EditSection::Multiclass => "↑↓ select  a add class  l/+ level up  Tab next  Esc back",
         EditSection::LevelUpChoice => "↑↓ select  Enter confirm  Esc skip",
@@ -159,12 +162,25 @@ fn render_fields(app: &App, frame: &mut Frame, area: Rect) {
 
 fn render_pickers(app: &mut App, frame: &mut Frame, area: Rect) {
     let picker_chunks = Layout::vertical([
-        Constraint::Percentage(25),
-        Constraint::Percentage(25),
-        Constraint::Percentage(25),
-        Constraint::Percentage(25),
+        Constraint::Percentage(20),
+        Constraint::Percentage(20),
+        Constraint::Percentage(20),
+        Constraint::Percentage(20),
+        Constraint::Percentage(20),
     ])
     .split(area);
+
+    // Race
+    let race_items: Vec<ListItem> = app
+        .races
+        .iter()
+        .map(|r| ListItem::new(format!("{} [{}]", r.name, source_id_label(r.source_id))))
+        .collect();
+    let selected_race = app
+        .races
+        .get(app.edit_race_index)
+        .map(|r| r.name.clone())
+        .unwrap_or_else(|| "—".to_string());
 
     render_picker_list(
         app,
@@ -173,12 +189,21 @@ fn render_pickers(app: &mut App, frame: &mut Frame, area: Rect) {
         "Race",
         F_RACE,
         EditSection::Race,
-        app.races
-            .iter()
-            .map(|r| format!("{} [{}]", r.name, source_id_label(r.source_id)))
-            .collect(),
-        app.edit_race_index,
+        race_items,
+        selected_race,
     );
+
+    // Class
+    let class_items: Vec<ListItem> = app
+        .classes
+        .iter()
+        .map(|c| ListItem::new(format!("{} [{}] (d{})", c.name, c.source_slug, c.hit_die)))
+        .collect();
+    let selected_class = app
+        .classes
+        .get(app.edit_class_index)
+        .map(|c| c.name.clone())
+        .unwrap_or_else(|| "—".to_string());
 
     render_picker_list(
         app,
@@ -187,28 +212,77 @@ fn render_pickers(app: &mut App, frame: &mut Frame, area: Rect) {
         "Class",
         F_CLASS,
         EditSection::Class,
-        app.classes
-            .iter()
-            .map(|c| format!("{} [{}] (d{})", c.name, c.source_slug, c.hit_die))
-            .collect(),
-        app.edit_class_index,
+        class_items,
+        selected_class,
     );
+
+    // Subclass
+    let mut subclass_items: Vec<ListItem> = Vec::new();
+    let mut selected_subclass = "—".to_string();
+    if let Some(detail) = &app.class_detail {
+        for swf in &detail.subclasses {
+            let s = &swf.subclass;
+            let source = if s.source_slug.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", s.source_slug)
+            };
+            subclass_items.push(ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("  {}", s.name),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(source, Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("  (unlocks lv {})", s.unlock_level),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])));
+        }
+        selected_subclass = detail
+            .subclasses
+            .get(app.edit_subclass_index)
+            .map(|swf| swf.subclass.name.clone())
+            .unwrap_or_else(|| "None".to_string());
+    }
 
     render_picker_list(
         app,
         frame,
         picker_chunks[2],
+        "Subclass",
+        F_SUBCLASS,
+        EditSection::Subclass,
+        subclass_items,
+        selected_subclass,
+    );
+
+    // Background
+    let bg_items: Vec<ListItem> = app
+        .backgrounds
+        .iter()
+        .map(|b| ListItem::new(format!("{} [{}]", b.name, source_id_label(b.source_id))))
+        .collect();
+    let selected_bg = app
+        .backgrounds
+        .get(app.edit_bg_index)
+        .map(|b| b.name.clone())
+        .unwrap_or_else(|| "—".to_string());
+
+    render_picker_list(
+        app,
+        frame,
+        picker_chunks[3],
         "Background",
         F_BG,
         EditSection::Background,
-        app.backgrounds
-            .iter()
-            .map(|b| format!("{} [{}]", b.name, source_id_label(b.source_id)))
-            .collect(),
-        app.edit_bg_index,
+        bg_items,
+        selected_bg,
     );
 
-    render_multiclass_panel(app, frame, picker_chunks[3]);
+    render_multiclass_panel(app, frame, picker_chunks[4]);
 }
 
 fn render_multiclass_panel(app: &mut App, frame: &mut Frame, area: Rect) {
@@ -311,8 +385,8 @@ fn render_picker_list(
     title: &str,
     field_idx: usize,
     section: EditSection,
-    items_text: Vec<String>,
-    selected_idx: usize,
+    items: Vec<ListItem>,
+    selected_name: String,
 ) {
     let is_active = app.edit_section == section;
     let is_focused_field =
@@ -326,11 +400,6 @@ fn render_picker_list(
         Color::Gray
     };
 
-    let selected_name = items_text
-        .get(selected_idx)
-        .cloned()
-        .unwrap_or_else(|| "—".to_string());
-
     let block_title = if is_active {
         format!(" {title}: {selected_name} ")
     } else {
@@ -343,12 +412,7 @@ fn render_picker_list(
         .border_style(Style::default().fg(border_color));
 
     if is_active {
-        let list_items: Vec<ListItem> = items_text
-            .iter()
-            .map(|name| ListItem::new(name.clone()).style(Style::default().fg(Color::White)))
-            .collect();
-
-        let list = List::new(list_items)
+        let list = List::new(items)
             .block(block)
             .highlight_style(
                 Style::default()
@@ -360,6 +424,7 @@ fn render_picker_list(
         let state = match section {
             EditSection::Race => &mut app.edit_race_state,
             EditSection::Class => &mut app.edit_class_state,
+            EditSection::Subclass => &mut app.edit_subclass_state,
             EditSection::Background => &mut app.edit_bg_state,
             EditSection::Fields | EditSection::Multiclass | EditSection::LevelUpChoice => return,
         };

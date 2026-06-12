@@ -9,13 +9,12 @@ pub use auth::{AuthResponse, LoginRequest, SignupRequest};
 pub use character::{
     AddCharacterClassRequest, AddInventoryRequest, AddProficiencyRequest, AddSpellRequest,
     AsiChoiceRequest, Character, CharacterClassResponse, CharacterFeat, CharacterHitDice, CharacterProficiency,
-    CharacterRaceOption, CharacterSpell, CharacterSpellSlot, CreateCharacterRequest,
+    CharacterSpell, CharacterSpellSlot, CreateCharacterRequest,
     InventoryItem, PatchCharacterClassRequest, PatchProficiencyRequest,
-    RaceOptionSelectionRequest, UpdateCharacterRequest, UpdateInventoryRequest, UpdateSpellRequest,
+    UpdateCharacterRequest, UpdateInventoryRequest, UpdateSpellRequest,
 };
 pub use compendium::{
-    Background, Class, ClassDetailResponse, ClassResourceResponse, Feat, Item, Monster,
-    OptionalFeature, Race, RaceOption, Spell,
+    Background, Class, ClassDetailResponse, ClassResourceResponse, Feat, Item, Race, Spell,
 };
 pub use error::ApiErrorResponse;
 pub mod app_state;
