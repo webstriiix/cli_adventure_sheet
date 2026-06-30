@@ -13,7 +13,7 @@ pub fn render(app: &App, frame: &mut Frame) {
     let area = frame.area();
 
     // Center a box
-    let popup = centered_rect(50, 60, area);
+    let popup = crate::utils::centered_rect(50, 60, area);
     frame.render_widget(Clear, popup);
 
     let title = match app.auth_mode {
@@ -98,7 +98,7 @@ pub fn render(app: &App, frame: &mut Frame) {
     ])
     .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(help, chunks[help_idx]);
-
+// ... other code ...
     // Status message
     let status_idx = field_count + 2;
     if !app.status_msg.is_empty() {
@@ -108,18 +108,3 @@ pub fn render(app: &App, frame: &mut Frame) {
     }
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::vertical([
-        Constraint::Percentage((100 - percent_y) / 2),
-        Constraint::Percentage(percent_y),
-        Constraint::Percentage((100 - percent_y) / 2),
-    ])
-    .split(r);
-
-    Layout::horizontal([
-        Constraint::Percentage((100 - percent_x) / 2),
-        Constraint::Percentage(percent_x),
-        Constraint::Percentage((100 - percent_x) / 2),
-    ])
-    .split(popup_layout[1])[1]
-}

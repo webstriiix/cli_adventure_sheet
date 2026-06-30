@@ -31,7 +31,8 @@ impl App {
         let compendium_feat_id = feat.feat_id; // Feat ID (Compendium)
 
         // Optimistically update UI
-        self.char_feats[self.selected_list_index] = feat.clone();
+        let idx = self.selected_list_index;
+        self.char_feats[idx] = feat.clone();
         self.status_msg = if change > 0 {
             "Feature used".to_string()
         } else {

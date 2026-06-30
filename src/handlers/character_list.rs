@@ -32,19 +32,67 @@ pub fn handle_char_list_key(app: &mut App, key: KeyEvent) {
         KeyCode::Up => {
             if app.selected_char > 0 {
                 app.selected_char -= 1;
-                app.char_list_state.select(Some(app.selected_char));
+                let idx = app.selected_char;
+                app.char_list_state.select(Some(idx));
             }
         }
         KeyCode::Down => {
             if !app.characters.is_empty() && app.selected_char + 1 < app.characters.len() {
                 app.selected_char += 1;
-                app.char_list_state.select(Some(app.selected_char));
+                let idx = app.selected_char;
+                app.char_list_state.select(Some(idx));
             }
         }
         KeyCode::Enter => {
             if !app.characters.is_empty() {
                 let character = app.characters[app.selected_char].clone();
-                app.load_character_sheet(character.id);
+                if character.name.starts_with("[DRAFT]") {
+                    // Check active connection before resuming a draft
+                    if !app.is_online() {
+                        app.status_msg = "Offline! Cannot resume draft without an active connection.".to_string();
+                        return;
+                    }
+
+                    let mut loaded_draft = None;
+                    if let Some(ref notes) = character.notes {
+                        if let Ok(d) = serde_json::from_str::<crate::models::CharacterDraft>(notes) {
+                            loaded_draft = Some(d);
+                        }
+                    }
+
+                    app.builder = crate::models::app_state::BuilderState::default();
+                    app.builder.draft_id = Some(character.id);
+
+                    if let Some(d) = loaded_draft {
+                        app.builder.step = match d.current_step {
+                            1 => crate::models::app_state::CharacterCreationStep::Class,
+                            2 => crate::models::app_state::CharacterCreationStep::Background,
+                            3 => crate::models::app_state::CharacterCreationStep::Species,
+                            4 => crate::models::app_state::CharacterCreationStep::Abilities,
+                            5 => crate::models::app_state::CharacterCreationStep::Equipment,
+                            _ => crate::models::app_state::CharacterCreationStep::Class,
+                        };
+                        app.builder.class_id = d.class_id;
+                        app.builder.level = d.level;
+                        app.builder.subclass_id = d.subclass_id;
+                        app.builder.name = d.name;
+                        app.builder.trait_text = d.personality;
+                        app.builder.bg_id = d.background_id;
+                        app.builder.background_feat_id = d.background_feat_id;
+                        app.builder.race_id = d.species_id;
+                        app.builder.lineage_id = d.lineage_id;
+                        app.builder.abilities = d.abilities;
+                        app.builder.equipment_option = d.equipment_option;
+                    }
+
+                    if app.all_items.is_empty() {
+                        app.fetch_compendium_data();
+                    }
+                    app.screen = Screen::CharacterBuilder;
+                    app.status_msg = "Draft resumed.".to_string();
+                } else {
+                    app.load_character_sheet(character.id);
+                }
             }
         }
         KeyCode::Char('e') | KeyCode::Char('E') => {
@@ -82,7 +130,8 @@ pub fn delete_selected_character(app: &mut App) {
             if app.selected_char > 0 && app.selected_char >= app.characters.len() {
                 app.selected_char -= 1;
             }
-            app.char_list_state.select(Some(app.selected_char));
+            let idx = app.selected_char;
+            app.char_list_state.select(Some(idx));
             app.status_msg = "Character deleted.".to_string();
         }
         Err(e) => {

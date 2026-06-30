@@ -19,11 +19,13 @@ pub fn handle_skills_key(app: &mut App, key: KeyEvent) {
             } else {
                 app.selected_list_index = SKILLS_COUNT - 1;
             }
-            app.sheet_table_state.select(Some(app.selected_list_index));
+            let idx = app.selected_list_index;
+            app.sheet_table_state.select(Some(idx));
         }
         KeyCode::Down | KeyCode::Char('j') => {
             app.selected_list_index = (app.selected_list_index + 1) % SKILLS_COUNT;
-            app.sheet_table_state.select(Some(app.selected_list_index));
+            let idx = app.selected_list_index;
+            app.sheet_table_state.select(Some(idx));
         }
         KeyCode::Enter | KeyCode::Char(' ') => {
             let skill_name = SKILLS[app.selected_list_index].to_lowercase();

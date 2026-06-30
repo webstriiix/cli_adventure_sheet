@@ -332,3 +332,19 @@ pub struct AddProficiencyRequest {
 pub struct PatchProficiencyRequest {
     pub proficiency_type: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CharacterDraft {
+    pub current_step: usize, // 1 to 5
+    pub class_id: Option<i32>,
+    pub level: i32,
+    pub subclass_id: Option<i32>,
+    pub name: String,
+    pub personality: String,
+    pub background_id: Option<i32>,
+    pub background_feat_id: Option<i32>,
+    pub species_id: Option<i32>,
+    pub lineage_id: Option<i32>,
+    pub abilities: [i32; 6],
+    pub equipment_option: Option<usize>,
+}

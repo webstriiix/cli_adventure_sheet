@@ -164,7 +164,7 @@ pub fn open_action_detail_modal(app: &mut App) {
             ActionsSubTab::LimitedUse => actions.limited_use.get(selected).cloned(),
             ActionsSubTab::All => {
                 let mut all = actions.all.clone();
-                for la in local_actions {
+                for la in local_actions.clone() {
                     if !all.iter().any(|a| a.name == la.name) {
                         all.push(la);
                     }
@@ -173,12 +173,19 @@ pub fn open_action_detail_modal(app: &mut App) {
             }
             ActionsSubTab::Attack => {
                 let mut attack = actions.attack.clone();
-                for la in local_actions {
+                for la in local_actions.clone() {
                     if !attack.iter().any(|a| a.name == la.name) {
                         attack.push(la);
                     }
                 }
-                attack.get(selected).cloned()
+                // Prefer local action (with full description) if available
+                let selected_name = attack.get(selected).map(|a| a.name.clone());
+                if let Some(name) = selected_name {
+                    local_actions.iter().find(|a| a.name == name).cloned()
+                        .or_else(|| attack.get(selected).cloned())
+                } else {
+                    attack.get(selected).cloned()
+                }
             }
             ActionsSubTab::Action => actions.action.get(selected).cloned(),
             ActionsSubTab::BonusAction => actions.bonus_action.get(selected).cloned(),

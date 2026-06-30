@@ -62,7 +62,8 @@ impl App {
                 .update_inventory_item(character_id, inventory_id, &req),
         ) {
             Ok(updated) => {
-                self.char_inventory[self.selected_list_index] = updated;
+                let idx = self.selected_list_index;
+                self.char_inventory[idx] = updated;
                 self.status_msg = if new_equipped {
                     "Item equipped".to_string()
                 } else {
@@ -100,7 +101,8 @@ impl App {
                 .update_inventory_item(character_id, inventory_id, &req),
         ) {
             Ok(updated) => {
-                self.char_inventory[self.selected_list_index] = updated;
+                let idx = self.selected_list_index;
+                self.char_inventory[idx] = updated;
                 self.status_msg = if new_attuned {
                     "Item attuned".to_string()
                 } else {
@@ -141,7 +143,8 @@ impl App {
                 .update_inventory_item(character_id, inventory_id, &req),
         ) {
             Ok(updated) => {
-                self.char_inventory[self.selected_list_index] = updated;
+                let idx = self.selected_list_index;
+                self.char_inventory[idx] = updated;
                 self.status_msg = format!("Quantity: {new_qty}");
             }
             Err(e) => {

@@ -34,8 +34,8 @@ pub fn handle_notes_key(app: &mut App, key: KeyEvent) {
 }
 
 pub fn handle_notes_edit_key(app: &mut App, key: KeyEvent) {
-    let buf = &mut app.notes_buffer;
-    let mut cursor = app.notes_cursor;
+    let buf = &mut app.ui.notes_buffer;
+    let mut cursor = app.ui.notes_cursor;
 
     match key.code {
         KeyCode::Esc => {
@@ -123,5 +123,5 @@ pub fn handle_notes_edit_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
-    app.notes_cursor = cursor;
+    app.ui.notes_cursor = cursor;
 }

@@ -1,242 +1,237 @@
 use crate::app::App;
 use crate::models::app_state::CharacterCreationStep;
-use crate::models::compendium::source_id_label;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
 
-pub fn render(app: &mut App, frame: &mut Frame) {
-    let area = frame.area();
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BgFocus {
+    Name,
+    Personality,
+    BackgroundList,
+}
 
-    // 1) Layout
-    let outer = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(0),
-        Constraint::Length(2),
-    ])
-    .split(area);
-
-    let title = Paragraph::new(" Character Builder: Step 4 - Background ")
-        .style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-        .block(Block::default().borders(Borders::BOTTOM));
-    frame.render_widget(title, outer[0]);
-
-    // 2) Body
-    let body = Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)])
-        .split(outer[1]);
-
-    // 3) List
-    let items: Vec<ListItem> = app
-        .backgrounds
-        .iter()
-        .map(|b| {
-            ListItem::new(Line::from(vec![
-                Span::raw(b.name.clone()),
-                Span::raw(" "),
-                Span::styled(
-                    format!("[{}]", source_id_label(b.source_id)),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]))
-        })
-        .collect();
-
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Select Background "),
-        )
-        .highlight_style(
-            Style::default()
-                .bg(Color::Cyan)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol(">> ");
-    frame.render_stateful_widget(list, body[0], &mut app.builder.list_state);
-
-    // 4) Details
-    if let Some(idx) = app.builder.list_state.selected() {
-        if let Some(bg) = app.backgrounds.get(idx) {
-            let mut lines = Vec::new();
-
-            lines.push(Line::from(vec![
-                Span::styled(
-                    bg.name.clone(),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::styled(
-                    format!("[{}]", source_id_label(bg.source_id)),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]));
-            lines.push(Line::from(""));
-
-            // Skills
-            if let Some(skills) = &bg.skill_proficiencies {
-                let mut skill_names = Vec::new();
-                for sk in skills {
-                    if let Some(obj) = sk.as_object() {
-                        for k in obj.keys() {
-                            skill_names.push(k.clone());
-                        }
-                    } else if let Some(s) = sk.as_str() {
-                        skill_names.push(s.to_string());
-                    }
-                }
-                if !skill_names.is_empty() {
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            "Skill Proficiencies: ",
-                            Style::default().add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(skill_names.join(", ")),
-                    ]));
-                }
-            }
-
-            // Tools
-            if let Some(tools) = &bg.tool_proficiencies {
-                let mut tool_names = Vec::new();
-                for t in tools {
-                    if let Some(obj) = t.as_object() {
-                        for k in obj.keys() {
-                            tool_names.push(k.clone());
-                        }
-                    } else if let Some(s) = t.as_str() {
-                        tool_names.push(s.to_string());
-                    }
-                }
-                if !tool_names.is_empty() {
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            "Tool Proficiencies: ",
-                            Style::default().add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(tool_names.join(", ")),
-                    ]));
-                }
-            }
-
-            // Languages
-            if let Some(lang_count) = bg.language_count {
-                if lang_count > 0 {
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            "Bonus Languages: ",
-                            Style::default().add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(format!("Choose {} additional language(s)", lang_count)),
-                    ]));
-                }
-            }
-            lines.push(Line::from(""));
-
-            // Note
-            lines.push(Line::from(Span::styled(
-                "Background Feature:",
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::from(
-                "Provides a unique roleplay feature and starting gear.",
-            ));
-
-            let detail_p = Paragraph::new(lines)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Background Details "),
-                )
-                .wrap(Wrap { trim: true });
-            frame.render_widget(detail_p, body[1]);
-        }
+fn get_focus(app: &App) -> BgFocus {
+    match app.builder.focus_index {
+        0 => BgFocus::Name,
+        1 => BgFocus::Personality,
+        _ => BgFocus::BackgroundList,
     }
+}
 
-    // 5) Help
-    let help = Paragraph::new("↑↓ select   Enter confirm   Esc back to abilities")
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(help, outer[2]);
+pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
+    let body = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(area);
+
+    // ── Left: Form fields ──
+    let form = Layout::vertical([
+        Constraint::Length(3), // Character Name
+        Constraint::Length(5), // Personality
+        Constraint::Min(0),    // Feat status
+    ])
+    .margin(1)
+    .split(body[0]);
+
+    let focus = get_focus(app);
+
+    // Name field
+    let name_focused = focus == BgFocus::Name;
+    let name_display = if name_focused {
+        format!("{}█", app.builder.name)
+    } else if app.builder.name.is_empty() {
+        "⚠ Required".to_string()
+    } else {
+        app.builder.name.clone()
+    };
+    let name_border_style = if name_focused {
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let name_p = Paragraph::new(name_display)
+        .block(Block::default().borders(Borders::ALL).title(" Character Name * ").border_style(name_border_style))
+        .style(if name_focused { Style::default().fg(Color::White) } else { Style::default().fg(Color::Gray) });
+    frame.render_widget(name_p, form[0]);
+
+    // Personality field
+    let per_focused = focus == BgFocus::Personality;
+    let per_display = if per_focused {
+        format!("{}█", app.builder.trait_text)
+    } else if app.builder.trait_text.is_empty() {
+        "(personality trait, ideal, bond or flaw)".to_string()
+    } else {
+        app.builder.trait_text.clone()
+    };
+    let per_border_style = if per_focused {
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let per_p = Paragraph::new(per_display)
+        .block(Block::default().borders(Borders::ALL).title(" Personality ").border_style(per_border_style))
+        .style(if per_focused { Style::default().fg(Color::White) } else { Style::default().fg(Color::DarkGray) })
+        .wrap(Wrap { trim: true });
+    frame.render_widget(per_p, form[1]);
+
+    // Feat chosen indicator
+    let feat_text = if let Some(feat_id) = app.builder.background_feat_id {
+        let feat_name = app.all_feats.iter().find(|f| f.id == feat_id).map(|f| f.name.as_str()).unwrap_or("Unknown");
+        format!("Origin Feat: {} ✓\nPress 'F' to change", feat_name)
+    } else {
+        let bg_grants_feat = app.builder.bg_id
+            .and_then(|id| app.backgrounds.iter().find(|b| b.id == id))
+            .map(|b| b.grants_bonus_feat)
+            .unwrap_or(false);
+        if bg_grants_feat {
+            "Background grants an Origin Feat!\nPress 'F' to choose it.".to_string()
+        } else {
+            "No Origin Feat from this background.".to_string()
+        }
+    };
+    let feat_p = Paragraph::new(feat_text)
+        .block(Block::default().borders(Borders::ALL).title(" Origin Feat ").border_style(Style::default().fg(Color::DarkGray)))
+        .style(Style::default().fg(Color::DarkGray))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(feat_p, form[2]);
+
+    // ── Right: Background list ──
+    let bg_list_focused = focus == BgFocus::BackgroundList;
+    let items: Vec<ListItem> = app.backgrounds.iter().map(|bg| {
+        let is_selected = Some(bg.id) == app.builder.bg_id;
+        let name_style = if is_selected {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let mut spans = vec![Span::styled(bg.name.clone(), name_style)];
+        if bg.grants_bonus_feat {
+            spans.push(Span::styled(" [+Feat]", Style::default().fg(Color::Yellow)));
+        }
+        ListItem::new(Line::from(spans))
+    }).collect();
+
+    let bg_border = if bg_list_focused {
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(" Select Background (Tab to focus) ").border_style(bg_border))
+        .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD))
+        .highlight_symbol(">> ");
+    frame.render_stateful_widget(list, body[1], &mut app.builder.list_state);
 }
 
 pub fn handle_key(app: &mut App, key: KeyEvent) {
+    let focus = get_focus(app);
+
     match key.code {
         KeyCode::Esc => {
-            app.builder.step = CharacterCreationStep::Abilities;
+            app.builder.step = CharacterCreationStep::Class;
             app.builder.list_state.select(Some(0));
+            app.builder.focus_index = 0;
+            app.status_msg.clear();
         }
-        KeyCode::Up => {
-            let i = match app.builder.list_state.selected() {
-                Some(i) => {
-                    if i > 0 {
-                        i - 1
-                    } else {
-                        app.backgrounds.len().saturating_sub(1)
-                    }
-                }
-                None => 0,
-            };
-            app.builder.list_state.select(Some(i));
+        KeyCode::Tab => {
+            app.builder.focus_index = (app.builder.focus_index + 1) % 3;
         }
-        KeyCode::Down => {
-            let i = match app.builder.list_state.selected() {
-                Some(i) => {
-                    if i + 1 < app.backgrounds.len() {
-                        i + 1
-                    } else {
-                        0
-                    }
-                }
-                None => 0,
-            };
-            app.builder.list_state.select(Some(i));
+        KeyCode::BackTab => {
+            if app.builder.focus_index == 0 {
+                app.builder.focus_index = 2;
+            } else {
+                app.builder.focus_index -= 1;
+            }
+        }
+        KeyCode::Char('f') | KeyCode::Char('F') => {
+            let bg_grants_feat = app.builder.bg_id
+                .and_then(|id| app.backgrounds.iter().find(|b| b.id == id))
+                .map(|b| b.grants_bonus_feat)
+                .unwrap_or(false);
+            if bg_grants_feat {
+                app.builder.show_feat_modal = true;
+                app.builder.feat_list_state.select(Some(0));
+                app.builder.feat_picker_search.clear();
+            } else {
+                app.status_msg = "Select a background that grants an Origin Feat first.".to_string();
+            }
         }
         KeyCode::Enter => {
-            if let Some(idx) = app.builder.list_state.selected() {
-                if let Some(bg) = app.backgrounds.get(idx) {
-                    app.builder.bg_id = Some(bg.id);
-                    app.builder.background_feat_id = None;
-                    app.builder.feat_picker_search.clear();
-                    app.builder.feat_picker_index = 0;
-                    app.builder.language_count = bg.language_count.unwrap_or(0);
-
-                    // Reset bg ability state for new selection
-                    app.builder.bg_ability_bonuses = [0; 6];
-                    app.builder.bg_ability_step = 0;
-                    app.builder.bg_ability_focus = 0;
-
-                    let has_ability_choose = bg
-                        .ability_bonuses
-                        .as_ref()
-                        .and_then(|v| v.first())
-                        .and_then(|v| v.pointer("/choose/weighted/from"))
-                        .is_some();
-
-                    if has_ability_choose {
-                        app.builder.step = CharacterCreationStep::BackgroundAbilities;
-                    } else if bg.grants_bonus_feat {
-                        // XPHB backgrounds all grant a bonus Origin feat — pick it first
-                        app.builder.step = CharacterCreationStep::BackgroundFeat;
-                    } else if app.builder.language_count > 0 {
-                        app.builder.step = CharacterCreationStep::Languages;
-                    } else {
-                        app.builder.step = CharacterCreationStep::Proficiencies;
+            match focus {
+                BgFocus::Name => {
+                    app.builder.focus_index = 1; // Move to personality
+                }
+                BgFocus::Personality => {
+                    app.builder.focus_index = 2; // Move to background list
+                }
+                BgFocus::BackgroundList => {
+                    // Validate
+                    if app.builder.name.trim().is_empty() {
+                        app.status_msg = "Character Name is required!".to_string();
+                        app.builder.focus_index = 0;
+                        return;
                     }
 
+                    // Check if selected background grants feat and we haven't chosen one yet
+                    let bg_grants_feat = app.builder.bg_id
+                        .and_then(|id| app.backgrounds.iter().find(|b| b.id == id))
+                        .map(|b| b.grants_bonus_feat)
+                        .unwrap_or(false);
+                    if bg_grants_feat && app.builder.background_feat_id.is_none() {
+                        app.status_msg = "This background grants an Origin Feat — press 'F' to choose it!".to_string();
+                        app.builder.show_feat_modal = true;
+                        app.builder.feat_list_state.select(Some(0));
+                        return;
+                    }
+
+                    // Save draft and advance
+                    if !app.save_draft() {
+                        return;
+                    }
+                    app.builder.step = CharacterCreationStep::Species;
                     app.builder.list_state.select(Some(0));
+                    app.builder.focus_index = 0;
                     app.status_msg.clear();
+                }
+            }
+        }
+        // Text input for Name and Personality
+        KeyCode::Backspace => match focus {
+            BgFocus::Name => { app.builder.name.pop(); }
+            BgFocus::Personality => { app.builder.trait_text.pop(); }
+            BgFocus::BackgroundList => {}
+        },
+        KeyCode::Char(c) => match focus {
+            BgFocus::Name => { app.builder.name.push(c); }
+            BgFocus::Personality => { app.builder.trait_text.push(c); }
+            BgFocus::BackgroundList => {}
+        },
+        // Background list navigation (only when focused on list)
+        KeyCode::Up => {
+            if focus == BgFocus::BackgroundList {
+                let i = app.builder.list_state.selected()
+                    .map(|i| if i > 0 { i - 1 } else { app.backgrounds.len().saturating_sub(1) })
+                    .unwrap_or(0);
+                app.builder.list_state.select(Some(i));
+                // Auto-select on hover
+                if let Some(bg) = app.backgrounds.get(i) {
+                    app.builder.bg_id = Some(bg.id);
+                }
+            }
+        }
+        KeyCode::Down => {
+            if focus == BgFocus::BackgroundList {
+                let i = app.builder.list_state.selected()
+                    .map(|i| if i + 1 < app.backgrounds.len() { i + 1 } else { 0 })
+                    .unwrap_or(0);
+                app.builder.list_state.select(Some(i));
+                if let Some(bg) = app.backgrounds.get(i) {
+                    app.builder.bg_id = Some(bg.id);
+                    // Reset feat if background changed
+                    app.builder.background_feat_id = None;
                 }
             }
         }

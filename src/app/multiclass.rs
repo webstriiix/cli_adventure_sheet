@@ -68,7 +68,8 @@ impl App {
         let rt = self.rt.clone();
         match rt.block_on(self.client.patch_character_class(character_id, cc.class_id, &req)) {
             Ok(updated_char) => {
-                self.char_classes[self.multiclass_selected].level = new_level;
+                let idx = self.multiclass_selected;
+            self.char_classes[idx].level = new_level;
                 self.active_character = Some(updated_char);
                 self.status_msg = format!("Multiclass level updated to {new_level}.");
             }

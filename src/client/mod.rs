@@ -138,9 +138,27 @@ impl ApiClient {
                 }
             }
         } else {
-            let message = match response.json::<ApiErrorResponse>().await {
+            // Read body text for diagnostics and log it.
+            let body_text = match response.text().await {
+                Ok(t) => t,
+                Err(_) => String::new(),
+            };
+            // Log to api_error.log for debugging server validation errors
+            {
+                use std::io::Write;
+                if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("api_error.log") {
+                    let preview = if body_text.len() > 1000 {
+                        format!("{}... ({} bytes)", &body_text[..1000], body_text.len())
+                    } else {
+                        body_text.clone()
+                    };
+                    let _ = writeln!(file, "[{}] HTTP {} => {}\n", url, status.as_u16(), preview);
+                }
+            }
+
+            let message = match serde_json::from_str::<ApiErrorResponse>(&body_text) {
                 Ok(err) => err.error,
-                Err(_) => format!("HTTP {status}"),
+                Err(_) => format!("HTTP {}: {}", status.as_u16(), body_text),
             };
             Err(ApiError::Api {
                 status: status.as_u16(),
@@ -151,17 +169,42 @@ impl ApiClient {
 
     async fn handle_empty_response(&self, response: reqwest::Response) -> Result<(), ApiError> {
         let status = response.status();
+        let url = response.url().to_string();
         if status.is_success() {
             Ok(())
         } else {
-            let message = match response.json::<ApiErrorResponse>().await {
+            // Read body text and log for diagnostics
+            let body_text = match response.text().await {
+                Ok(t) => t,
+                Err(_) => String::new(),
+            };
+            {
+                use std::io::Write;
+                if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("api_error.log") {
+                    let preview = if body_text.len() > 1000 {
+                        format!("{}... ({} bytes)", &body_text[..1000], body_text.len())
+                    } else {
+                        body_text.clone()
+                    };
+                    let _ = writeln!(file, "[{}] HTTP {} => {}\n", url, status.as_u16(), preview);
+                }
+            }
+            let message = match serde_json::from_str::<ApiErrorResponse>(&body_text) {
                 Ok(err) => err.error,
-                Err(_) => format!("HTTP {status}"),
+                Err(_) => format!("HTTP {}: {}", status.as_u16(), body_text),
             };
             Err(ApiError::Api {
                 status: status.as_u16(),
                 message,
             })
+        }
+    }
+
+    pub async fn check_health(&self) -> bool {
+        let url = self.url("/check_health");
+        match self.http.get(&url).send().await {
+            Ok(resp) => resp.status().is_success(),
+            Err(_) => false,
         }
     }
 }

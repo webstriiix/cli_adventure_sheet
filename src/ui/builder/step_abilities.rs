@@ -1,355 +1,211 @@
 use crate::app::App;
-use crate::models::app_state::{AbilityMode, CharacterCreationStep};
-use crate::utils::{ABILITY_NAMES, STANDARD_ARRAY};
+use crate::models::app_state::{CharacterCreationStep, AbilityMethod};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Layout},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
 
-pub fn render(app: &mut App, frame: &mut Frame) {
-    let area = frame.area();
+const ABILITIES: [&str; 6] = ["STR", "DEX", "CON", "INT", "WIS", "CHA"];
+const STANDARD_ARRAY: [i32; 6] = [15, 14, 13, 12, 10, 8];
+const POINT_BUY_BUDGET: i32 = 27;
 
-    // 1) Layout
-    let outer = Layout::vertical([
-        Constraint::Length(3),
+fn points_spent(scores: &[i32; 6]) -> i32 {
+    scores.iter().map(|&s| point_cost(s)).sum()
+}
+
+fn point_cost(score: i32) -> i32 {
+    match score {
+        8 => 0, 9 => 1, 10 => 2, 11 => 3, 12 => 4,
+        13 => 5, 14 => 7, 15 => 9,
+        _ => 0,
+    }
+}
+
+fn modifier(score: i32) -> i32 { (score - 10) / 2 }
+
+fn mod_str(score: i32) -> String {
+    let m = modifier(score);
+    if m >= 0 { format!("+{}", m) } else { format!("{}", m) }
+}
+
+pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
+    let method = app.builder.ability_method;
+    let body = Layout::vertical([
+        Constraint::Length(3), // method selector
         Constraint::Min(0),
-        Constraint::Length(2),
-    ])
-    .split(area);
+    ]).split(area);
 
-    let title = Paragraph::new(" Character Builder: Step 5 - Ability Scores ")
-        .style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-        .block(Block::default().borders(Borders::BOTTOM));
-    frame.render_widget(title, outer[0]);
-
-    // 2) Body
-    let body = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(outer[1]);
-
-    // Left side: Mode toggle + Available Array
-    let left_vert = Layout::vertical([
-        Constraint::Length(4),
-        Constraint::Length(6),
-        Constraint::Length(6),
-        Constraint::Min(0),
-    ])
-    .split(body[0]);
-
-    let mode_str = match app.builder.ability_mode {
-        AbilityMode::StandardArray => "Mode: Standard Array",
-        AbilityMode::Manual => "Mode: Manual Entry",
-    };
-
-    let mode_p = Paragraph::new(vec![
-        Line::from(Span::styled(
-            mode_str,
-            Style::default()
-                .add_modifier(Modifier::BOLD)
-                .fg(Color::Yellow),
-        )),
-        Line::from("Press [Tab] to toggle between modes."),
-    ])
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Generation Method "),
-    );
-    frame.render_widget(mode_p, left_vert[0]);
-
-    if app.builder.ability_mode == AbilityMode::StandardArray {
-        let mut avail = Vec::new();
-        for (i, &val) in STANDARD_ARRAY.iter().enumerate() {
-            if app.builder.standard_pool[i] {
-                avail.push(Span::styled(
-                    format!(" {} ", val),
-                    Style::default().fg(Color::Green),
-                ));
+    // Method toggle bar
+    let methods = [
+        ("Standard Array", AbilityMethod::StandardArray),
+        ("Point Buy", AbilityMethod::PointBuy),
+        ("Manual Entry", AbilityMethod::Manual),
+    ];
+    let mut method_spans: Vec<Span> = Vec::new();
+    for (i, (label, m)) in methods.iter().enumerate() {
+        if i > 0 { method_spans.push(Span::raw("  |  ")); }
+        let is_active = *m == method;
+        method_spans.push(Span::styled(
+            if is_active { format!("[{}]", label) } else { label.to_string() },
+            if is_active {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
             } else {
-                avail.push(Span::styled(" -- ", Style::default().fg(Color::DarkGray)));
-            }
-        }
-
-        let pool_p = Paragraph::new(Line::from(avail))
-            .alignment(Alignment::Center)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Available Scores "),
-            );
-        frame.render_widget(pool_p, left_vert[1]);
-
-        let instructions = Paragraph::new(vec![
-            Line::from("Select an ability on the right and press [Enter] to assign the highest available score from the array."),
-            Line::from("Press [Backspace] on an assigned ability to return it to the pool."),
-        ]).style(Style::default().fg(Color::DarkGray));
-        frame.render_widget(instructions, left_vert[2]);
-    } else {
-        let instructions = Paragraph::new(vec![
-            Line::from("Select an ability on the right and use [Left/Right] or [-/+] to adjust the score manually."),
-            Line::from("Consult your DM regarding Point Buy or Rolling rules."),
-        ]).style(Style::default().fg(Color::DarkGray));
-        frame.render_widget(instructions, left_vert[1]);
+                Style::default().fg(Color::DarkGray)
+            },
+        ));
     }
+    method_spans.push(Span::styled("  (Tab to switch)", Style::default().fg(Color::DarkGray)));
+    let method_p = Paragraph::new(Line::from(method_spans))
+        .block(Block::default().borders(Borders::ALL).title(" Ability Score Method ").border_style(Style::default().fg(Color::DarkGray)));
+    frame.render_widget(method_p, body[0]);
 
-    // Right side: six ability scores + racial bonuses
-    // We want to calculate the racial bonuses if a race was picked
-    let mut racial_bonuses = [0; 6];
-    if let Some(race_id) = app.builder.race_id {
-        if let Some(race) = app.races.iter().find(|r| r.id == race_id) {
-            for bonus in &race.ability_bonuses {
-                if let Some(obj) = bonus.as_object() {
-                    for (k, v) in obj {
-                        if let Some(val) = v.as_i64() {
-                            match k.to_lowercase().as_str() {
-                                "str" => racial_bonuses[0] += val as i32,
-                                "dex" => racial_bonuses[1] += val as i32,
-                                "con" => racial_bonuses[2] += val as i32,
-                                "int" => racial_bonuses[3] += val as i32,
-                                "wis" => racial_bonuses[4] += val as i32,
-                                "cha" => racial_bonuses[5] += val as i32,
-                                "choose" => {} // Ignore any "choose 2" logic for a simple CLI implementation
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // Abilities table
+    let content = Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)]).split(body[1]);
+    render_ability_table(app, frame, content[0]);
+    render_summary(app, frame, content[1]);
+}
 
-    let mut hp_preview = 0;
-    let init_preview;
+fn render_ability_table(app: &mut App, frame: &mut Frame, area: Rect) {
+    let method = app.builder.ability_method;
+    let spent = if method == AbilityMethod::PointBuy { points_spent(&app.builder.ability_scores) } else { 0 };
+    let budget_left = POINT_BUY_BUDGET - spent;
 
-    let dex_idx = 1;
-    let con_idx = 2;
-    let str_or_default = app.builder.abilities[dex_idx] + racial_bonuses[dex_idx] + app.builder.bg_ability_bonuses[dex_idx];
-    let con_or_default = app.builder.abilities[con_idx] + racial_bonuses[con_idx] + app.builder.bg_ability_bonuses[con_idx];
-
-    let con_mod = if con_or_default > 0 {
-        crate::utils::ability_modifier(con_or_default)
-    } else {
-        0
-    };
-    init_preview = if str_or_default > 0 {
-        crate::utils::ability_modifier(str_or_default)
-    } else {
-        0
+    let method_hint = match method {
+        AbilityMethod::StandardArray => "Using standard array: 15,14,13,12,10,8 (assigned top→down)",
+        AbilityMethod::PointBuy => &format!("Point Buy — Budget: {} remaining / {}", budget_left, POINT_BUY_BUDGET)[..],
+        AbilityMethod::Manual => "Manual: +/- to adjust selected score",
     };
 
-    if let Some(c_id) = app.builder.class_id {
-        if let Some(c) = app.classes.iter().find(|x| x.id == c_id) {
-            hp_preview = c.hit_die as i32 + con_mod;
-        }
+    let header = Row::new(vec![
+        Cell::from("Ability").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Cell::from("Score").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Cell::from("Mod").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Cell::from("Cost").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+    ]);
+
+    let rows: Vec<Row> = ABILITIES.iter().enumerate().map(|(i, &ab)| {
+        let is_selected = app.builder.ability_cursor == i;
+        let score = if method == AbilityMethod::StandardArray {
+            STANDARD_ARRAY[i]
+        } else {
+            app.builder.ability_scores[i]
+        };
+
+        let cost_str = if method == AbilityMethod::PointBuy {
+            format!("{}", point_cost(score))
+        } else {
+            "—".to_string()
+        };
+
+        let style = if is_selected {
+            Style::default().bg(Color::DarkGray).fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+
+        Row::new(vec![
+            Cell::from(ab),
+            Cell::from(format!("{:>2}", score)),
+            Cell::from(mod_str(score)),
+            Cell::from(cost_str),
+        ]).style(style)
+    }).collect();
+
+    let table = Table::new(rows, [Constraint::Length(8), Constraint::Length(6), Constraint::Length(5), Constraint::Length(5)])
+        .header(header)
+        .block(Block::default().borders(Borders::ALL).title(format!(" Ability Scores — {} ", method_hint)).border_style(Style::default().fg(Color::DarkGray)));
+    frame.render_widget(table, area);
+}
+
+fn render_summary(app: &App, frame: &mut Frame, area: Rect) {
+    let method = app.builder.ability_method;
+    let mut lines = vec![
+        Line::from(Span::styled("Score Summary", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+        Line::from(""),
+    ];
+
+    for (i, &ab) in ABILITIES.iter().enumerate() {
+        let score = if method == AbilityMethod::StandardArray { STANDARD_ARRAY[i] } else { app.builder.ability_scores[i] };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:>3}: ", ab), Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{:>2} ", score), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("({})", mod_str(score)), Style::default().fg(Color::Cyan)),
+        ]));
     }
 
-    let right_vert = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Length(2),
-        Constraint::Length(2),
-        Constraint::Length(2),
-        Constraint::Length(2),
-        Constraint::Length(2),
-        Constraint::Length(4), // derived stats box
-    ])
-    .margin(1)
-    .split(body[1]);
+    // Hint about next step
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("Press Enter to continue", Style::default().fg(Color::DarkGray))));
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Assign Scores ");
-    frame.render_widget(block, body[1]);
-
-    for i in 0..6 {
-        let is_focused = app.builder.ability_focus == i;
-        let base_val = app.builder.abilities[i];
-        let racial = racial_bonuses[i];
-
-        let style = if is_focused {
-            Style::default()
-                .bg(Color::Cyan)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
-
-        // Format: STR   Base: 15 (Race: +1) = 16  [+3]
-        let bg_bonus = app.builder.bg_ability_bonuses[i];
-        let total = base_val + racial + bg_bonus;
-        let modifier = (total - 10) / 2;
-
-        let mut bonus_parts = Vec::new();
-        if racial > 0 {
-            bonus_parts.push(format!("Race: +{}", racial));
-        }
-        if bg_bonus > 0 {
-            bonus_parts.push(format!("BG: +{}", bg_bonus));
-        }
-        let racial_str = if bonus_parts.is_empty() {
-            "".to_string()
-        } else {
-            format!("({})", bonus_parts.join(", "))
-        };
-        let base_str = if base_val == 0 {
-            "--".to_string()
-        } else {
-            base_val.to_string()
-        };
-        let sign = if modifier >= 0 { "+" } else { "" };
-
-        let line = if base_val == 0 && app.builder.ability_mode == AbilityMode::StandardArray {
-            format!("{:<4} Base: {}", ABILITY_NAMES[i], "Unassigned")
-        } else {
-            format!(
-                "{:<4} Base: {:<2} {:<10} = {:<2}  [{}{}]",
-                ABILITY_NAMES[i], base_str, racial_str, total, sign, modifier
-            )
-        };
-
-        let p = Paragraph::new(line).style(style);
-        frame.render_widget(p, right_vert[i]);
-    }
-
-    // Derived statistics preview
-    let init_str = if init_preview >= 0 {
-        format!("+{}", init_preview)
-    } else {
-        init_preview.to_string()
-    };
-    let spell_str = if app.builder.spellcasting_type != "none" {
-        " | Save DC: TBD" // Could expand if desired
-    } else {
-        ""
-    };
-
-    let derived_p = Paragraph::new(vec![
-        Line::from(format!("Hit Points (Level 1): {}", hp_preview)),
-        Line::from(format!("Initiative: {}{}", init_str, spell_str)),
-    ])
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Class Previews "),
-    )
-    .style(Style::default().fg(Color::LightCyan));
-
-    frame.render_widget(derived_p, right_vert[6]);
-
-    // 5) Help
-    let help =
-        Paragraph::new("Tab toggle mode   ↑↓ select   Enter/Arrows assign   Esc back to class")
-            .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(help, outer[2]);
+    let p = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title(" Preview ").border_style(Style::default().fg(Color::DarkGray)));
+    frame.render_widget(p, area);
 }
 
 pub fn handle_key(app: &mut App, key: KeyEvent) {
+    let method = app.builder.ability_method;
     match key.code {
         KeyCode::Esc => {
-            if app.builder.skip_subclass {
-                app.builder.step = CharacterCreationStep::Class;
-                let idx = app
-                    .builder
-                    .class_id
-                    .and_then(|id| app.classes.iter().position(|r| r.id == id))
-                    .unwrap_or(0);
-                app.builder.list_state.select(Some(idx));
-            } else {
-                app.builder.step = CharacterCreationStep::Subclass;
-            }
-        }
-        KeyCode::Tab => {
-            app.builder.ability_mode = match app.builder.ability_mode {
-                AbilityMode::StandardArray => {
-                    app.builder.abilities = [10; 6];
-                    AbilityMode::Manual
-                }
-                AbilityMode::Manual => {
-                    app.builder.abilities = [0; 6];
-                    app.builder.standard_pool = vec![true; 6]; // reset
-                    AbilityMode::StandardArray
-                }
-            };
-            app.builder.ability_focus = 0;
+            app.builder.step = CharacterCreationStep::Species;
+            app.builder.list_state.select(Some(0));
             app.status_msg.clear();
         }
+        KeyCode::Tab => {
+            app.builder.ability_method = match method {
+                AbilityMethod::StandardArray => AbilityMethod::PointBuy,
+                AbilityMethod::PointBuy => AbilityMethod::Manual,
+                AbilityMethod::Manual => AbilityMethod::StandardArray,
+            };
+        }
         KeyCode::Up => {
-            if app.builder.ability_focus > 0 {
-                app.builder.ability_focus -= 1;
-            } else {
-                app.builder.ability_focus = 5;
+            if app.builder.ability_cursor > 0 {
+                app.builder.ability_cursor -= 1;
             }
         }
         KeyCode::Down => {
-            if app.builder.ability_focus < 5 {
-                app.builder.ability_focus += 1;
-            } else {
-                app.builder.ability_focus = 0;
+            if app.builder.ability_cursor < 5 {
+                app.builder.ability_cursor += 1;
             }
         }
-        KeyCode::Right | KeyCode::Char('+') => {
-            if app.builder.ability_mode == AbilityMode::Manual
-                && app.builder.abilities[app.builder.ability_focus] < 20
-            {
-                app.builder.abilities[app.builder.ability_focus] += 1;
+        KeyCode::Char('+') | KeyCode::Char('=') => {
+            if method == AbilityMethod::PointBuy || method == AbilityMethod::Manual {
+                let i = app.builder.ability_cursor;
+                let cur = app.builder.ability_scores[i];
+                let budget_left = POINT_BUY_BUDGET - points_spent(&app.builder.ability_scores);
+                let new_score = cur + 1;
+                let delta_cost = point_cost(new_score) - point_cost(cur);
+                if new_score <= 15 {
+                    if method == AbilityMethod::Manual || delta_cost <= budget_left {
+                        app.builder.ability_scores[i] = new_score;
+                    } else {
+                        app.status_msg = format!("Not enough points (need {}, have {}).", delta_cost, budget_left);
+                    }
+                }
             }
         }
-        KeyCode::Left | KeyCode::Char('-') => {
-            if app.builder.ability_mode == AbilityMode::Manual
-                && app.builder.abilities[app.builder.ability_focus] > 3
-            {
-                app.builder.abilities[app.builder.ability_focus] -= 1;
+        KeyCode::Char('-') | KeyCode::Char('_') => {
+            if method == AbilityMethod::PointBuy || method == AbilityMethod::Manual {
+                let i = app.builder.ability_cursor;
+                let cur = app.builder.ability_scores[i];
+                if cur > 8 {
+                    app.builder.ability_scores[i] = cur - 1;
+                }
             }
         }
         KeyCode::Enter => {
-            if app.builder.ability_mode == AbilityMode::StandardArray {
-                if app.builder.abilities[app.builder.ability_focus] != 0 {
-                    if app.builder.all_abilities_set() {
-                        app.status_msg.clear();
-                        app.builder.step = CharacterCreationStep::Background;
-                        app.builder.list_state.select(Some(0));
-                    }
-                } else if let Some(pool_idx) = app
-                    .builder
-                    .standard_pool
-                    .iter()
-                    .position(|&available| available)
-                {
-                    app.builder.abilities[app.builder.ability_focus] = STANDARD_ARRAY[pool_idx];
-                    app.builder.standard_pool[pool_idx] = false;
+            // Apply standard array if selected
+            if method == AbilityMethod::StandardArray {
+                app.builder.ability_scores = STANDARD_ARRAY;
+            }
 
-                    if app.builder.all_abilities_set() {
-                        app.status_msg.clear();
-                        app.builder.step = CharacterCreationStep::Background;
-                        app.builder.list_state.select(Some(0));
-                    }
-                }
-            } else if app.builder.ability_mode == AbilityMode::Manual {
-                app.status_msg.clear();
-                app.builder.step = CharacterCreationStep::Background;
-                app.builder.list_state.select(Some(0));
-            }
-        }
-        KeyCode::Backspace => {
-            if app.builder.ability_mode == AbilityMode::StandardArray
-                && app.builder.abilities[app.builder.ability_focus] != 0
-            {
-                let val = app.builder.abilities[app.builder.ability_focus];
-                for (i, &v) in STANDARD_ARRAY.iter().enumerate() {
-                    if v == val && !app.builder.standard_pool[i] {
-                        app.builder.standard_pool[i] = true;
-                        break;
-                    }
-                }
-                app.builder.abilities[app.builder.ability_focus] = 0;
-            }
+            if !app.save_draft() { return; }
+            app.builder.step = CharacterCreationStep::Equipment;
+            app.builder.list_state.select(Some(0));
+            app.status_msg.clear();
         }
         _ => {}
     }

@@ -1,5 +1,5 @@
 use crate::models::{
-    Background, Class, ClassDetailResponse, Feat, Item, Race, Spell,
+    Background, Class, ClassDetailResponse, Feat, Item, Race, Spell, Subrace,
 };
 
 use super::{ApiClient, ApiError};
@@ -117,6 +117,11 @@ impl ApiClient {
             .get(self.url(&format!("/classes/{name}/{source}/resources/{level}")))
             .send()
             .await?;
+        self.handle_response(resp).await
+    }
+
+    pub async fn get_subraces(&self) -> Result<Vec<Subrace>, ApiError> {
+        let resp = self.http.get(self.url("/subraces")).send().await?;
         self.handle_response(resp).await
     }
 }

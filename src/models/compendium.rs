@@ -347,3 +347,14 @@ fn collect_text(val: &JsonValue, out: &mut Vec<String>) {
         _ => {}
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Subrace {
+    pub id: i32,
+    pub name: String,
+    pub source_id: i32,
+    pub race_id: i32,
+    pub speed: Option<JsonValue>,
+    pub ability_bonuses: Option<JsonValue>,
+    pub entries: Option<JsonValue>,
+}

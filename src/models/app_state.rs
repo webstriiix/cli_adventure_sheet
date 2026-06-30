@@ -1,5 +1,6 @@
 use crate::models::features::Feature;
-use ratatui::widgets::ListState;
+use ratatui::widgets::{ListState, TableState};
+use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Screen {
@@ -10,25 +11,20 @@ pub enum Screen {
     EditCharacter,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CharacterCreationStep {
-    Race,
-    RaceSkill,      // Human Skillful: choose a bonus skill proficiency
-    RaceFeat,       // Human Versatile: choose an Origin feat
-    BackgroundAbilities, // XPHB backgrounds: assign +2/+1 from 3 abilities
-    BackgroundFeat, // XPHB backgrounds: choose a bonus Origin feat
     Class,
-    Subclass,
-    Abilities,
     Background,
-    Languages,
-    Proficiencies,
+    Species,
+    Abilities,
     Equipment,
-    Spells,
-    Details,
-    Summary,
-    /// Triggered when the currently-pending feat grants weapon masteries.
-    FeatWeaponMastery,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BgAbilityChoice {
+    pub options: Vec<String>,
+    pub weights: Vec<i32>,
+    pub selected_idx: Option<usize>, // Which option was selected
 }
 
 pub struct BuilderState {
@@ -54,8 +50,9 @@ pub struct BuilderState {
 
     // Background ability bonuses (+2/+1 from XPHB backgrounds)
     pub bg_ability_bonuses: [i32; 6],
-    pub bg_ability_focus: usize,
-    pub bg_ability_step: u8, // 0=picking +2, 1=picking +1, 2=done
+    pub bg_ability_choices: Vec<BgAbilityChoice>, // Parsed choices
+    pub bg_ability_step: usize, // Which choice we are making
+    pub bg_ability_focus: usize, // Which option in current choice is selected
 
     // Abilities
     pub abilities: [i32; 6],
@@ -90,12 +87,37 @@ pub struct BuilderState {
     pub list_state: ListState,
     pub alignment_list_state: ListState,
     pub focus_index: usize,
+
+    // --- NEW DRAFT & MODAL STATE FIELDS ---
+    pub draft_id: Option<uuid::Uuid>,
+    pub level: i32,
+    pub species_id: Option<i32>,
+    pub lineage_id: Option<i32>,
+    pub subrace_id: Option<i32>, // alias for lineage_id used in step_race
+    pub show_subclass_modal: bool,
+    pub show_feat_modal: bool,
+    pub show_lineage_menu: bool,
+    pub subclass_list_state: ListState,
+    pub feat_list_state: ListState,
+    pub lineage_list_state: ListState,
+    /// TableState controlling the Level Progression table scroll/selection
+    pub progression_table_state: TableState,
+
+    // --- ABILITY SCORE METHOD FIELDS ---
+    pub ability_scores: [i32; 6],     // used by step_abilities
+    pub ability_method: AbilityMethod, // StandardArray / PointBuy / Manual
+    pub ability_cursor: usize,         // currently highlighted ability row
+
+    // --- EQUIPMENT STEP FIELDS ---
+    pub equipment_options: Vec<String>, // list of option labels for the class
+    pub equipment_choices: Vec<usize>,  // indices of chosen equipment options
+    pub starting_gold: Option<i32>,     // if the user opts for gold instead
 }
 
 impl Default for BuilderState {
     fn default() -> Self {
         Self {
-            step: CharacterCreationStep::Race,
+            step: CharacterCreationStep::Class,
             name: String::new(),
             race_id: None,
             class_id: None,
@@ -110,10 +132,11 @@ impl Default for BuilderState {
             weapon_mastery_choices: Vec::new(),
             feat_skill_choices: Vec::new(),
             bg_ability_bonuses: [0; 6],
-            bg_ability_focus: 0,
+            bg_ability_choices: Vec::new(),
             bg_ability_step: 0,
-            abilities: [8; 6], // default to 8 for point buy / manual
-            ability_mode: AbilityMode::StandardArray,
+            bg_ability_focus: 0,
+            abilities: [10; 6], // default to 10 for point buy / manual
+            ability_mode: AbilityMode::Manual,
             ability_focus: 0,
             standard_pool: vec![true; 6],
             skill_choices: Vec::new(),
@@ -134,6 +157,25 @@ impl Default for BuilderState {
             list_state: ListState::default().with_selected(Some(0)),
             alignment_list_state: ListState::default().with_selected(Some(0)),
             focus_index: 0,
+            draft_id: None,
+            level: 1,
+            species_id: None,
+            lineage_id: None,
+            subrace_id: None,
+            show_subclass_modal: false,
+            show_feat_modal: false,
+            show_lineage_menu: false,
+            subclass_list_state: ListState::default().with_selected(Some(0)),
+            feat_list_state: ListState::default().with_selected(Some(0)),
+            lineage_list_state: ListState::default().with_selected(Some(0)),
+            // Table state for level progression (used in class selection view)
+            progression_table_state: TableState::default().with_selected(Some(0)),
+            ability_scores: [8; 6],
+            ability_method: AbilityMethod::StandardArray,
+            ability_cursor: 0,
+            equipment_options: Vec::new(),
+            equipment_choices: Vec::new(),
+            starting_gold: None,
         }
     }
 }
@@ -156,6 +198,14 @@ pub enum AuthMode {
 pub enum AbilityMode {
     Manual,
     StandardArray,
+}
+
+/// Method used in the 5-step builder's ability score allocation step.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AbilityMethod {
+    StandardArray,
+    PointBuy,
+    Manual,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

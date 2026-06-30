@@ -4,7 +4,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::models::character::{Character, CharacterClass, CharacterFeat, CharacterSpell, InventoryItem, CharacterSpellSlot, CharacterHitDice, CharacterProficiency};
-use crate::models::compendium::{Background, Class, ClassDetailResponse, Feat, Item, Race, Spell, ClassResourceResponse};
+use crate::models::compendium::{Background, Class, ClassDetailResponse, Feat, Item, Race, Spell, ClassResourceResponse, Subrace};
 use crate::models::actions::CharacterActionsResponse;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -43,6 +43,7 @@ pub struct CompendiumCache {
     pub spells: Vec<Spell>,
     pub items: Vec<Item>,
     pub feats: Vec<Feat>,
+    pub subraces: Vec<Subrace>,
 }
 
 pub struct StorageManager {

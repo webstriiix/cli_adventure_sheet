@@ -1,9 +1,11 @@
 pub mod storage;
 pub mod weapon_mastery;
-
+pub mod weapon_properties;
 use crate::models::character::Character;
+use ratatui::layout::{Constraint, Layout, Rect};
 
 pub const ABILITY_NAMES: [&str; 6] = ["STR", "DEX", "CON", "INT", "WIS", "CHA"];
+
 pub const STANDARD_ARRAY: [i32; 6] = [15, 14, 13, 12, 10, 8];
 
 // D&D 5e XP thresholds for levels 1-20
@@ -252,4 +254,20 @@ fn collect_entry(entry: &serde_json::Value, out: &mut Vec<String>) {
         }
         _ => {}
     }
+}
+
+pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::vertical([
+        Constraint::Percentage((100 - percent_y) / 2),
+        Constraint::Percentage(percent_y),
+        Constraint::Percentage((100 - percent_y) / 2),
+    ])
+    .split(r);
+
+    Layout::horizontal([
+        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage((100 - percent_x) / 2),
+    ])
+    .split(popup_layout[1])[1]
 }

@@ -58,12 +58,14 @@ pub fn handle_edit_fields_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Backspace => {
             if app.edit_field_index < 13 {
-                app.edit_buffers[app.edit_field_index].pop();
+                let idx = app.edit_field_index;
+                app.edit_buffers[idx].pop();
             }
         }
         KeyCode::Char(c) => {
             if app.edit_field_index < 13 {
-                app.edit_buffers[app.edit_field_index].push(c);
+                let idx = app.edit_field_index;
+                app.edit_buffers[idx].push(c);
             }
         }
         _ => {}
@@ -99,7 +101,8 @@ fn ensure_subclasses_loaded(app: &mut App) {
             app.edit_subclass_index = detail.subclasses.iter()
                 .position(|swf| Some(swf.subclass.id) == current_subclass_id)
                 .unwrap_or(0);
-            app.edit_subclass_state.select(Some(app.edit_subclass_index));
+            let idx = app.edit_subclass_index;
+            app.edit_subclass_state.select(Some(idx));
             app.class_detail = Some(detail);
         }
     }
@@ -113,13 +116,15 @@ pub fn handle_edit_race_key(app: &mut App, key: KeyEvent) {
         KeyCode::Up => {
             if app.edit_race_index > 0 {
                 app.edit_race_index -= 1;
-                app.edit_race_state.select(Some(app.edit_race_index));
+                let idx = app.edit_race_index;
+                app.edit_race_state.select(Some(idx));
             }
         }
         KeyCode::Down => {
             if app.edit_race_index + 1 < app.races.len() {
                 app.edit_race_index += 1;
-                app.edit_race_state.select(Some(app.edit_race_index));
+                let idx = app.edit_race_index;
+                app.edit_race_state.select(Some(idx));
             }
         }
         KeyCode::Tab => {
@@ -142,7 +147,8 @@ pub fn handle_edit_class_key(app: &mut App, key: KeyEvent) {
         KeyCode::Up => {
             if app.edit_class_index > 0 {
                 app.edit_class_index -= 1;
-                app.edit_class_state.select(Some(app.edit_class_index));
+                let idx = app.edit_class_index;
+                app.edit_class_state.select(Some(idx));
                 // Reset subclass when class changes
                 app.class_detail = None;
                 app.edit_subclass_index = 0;
@@ -152,7 +158,8 @@ pub fn handle_edit_class_key(app: &mut App, key: KeyEvent) {
         KeyCode::Down => {
             if app.edit_class_index + 1 < app.classes.len() {
                 app.edit_class_index += 1;
-                app.edit_class_state.select(Some(app.edit_class_index));
+                let idx = app.edit_class_index;
+                app.edit_class_state.select(Some(idx));
                 // Reset subclass when class changes
                 app.class_detail = None;
                 app.edit_subclass_index = 0;
@@ -181,13 +188,15 @@ pub fn handle_edit_subclass_key(app: &mut App, key: KeyEvent) {
         KeyCode::Up => {
             if app.edit_subclass_index > 0 {
                 app.edit_subclass_index -= 1;
-                app.edit_subclass_state.select(Some(app.edit_subclass_index));
+                let idx = app.edit_subclass_index;
+                app.edit_subclass_state.select(Some(idx));
             }
         }
         KeyCode::Down => {
             if app.edit_subclass_index + 1 < count {
                 app.edit_subclass_index += 1;
-                app.edit_subclass_state.select(Some(app.edit_subclass_index));
+                let idx = app.edit_subclass_index;
+                app.edit_subclass_state.select(Some(idx));
             }
         }
         KeyCode::Tab => {
@@ -210,13 +219,15 @@ pub fn handle_edit_bg_key(app: &mut App, key: KeyEvent) {
         KeyCode::Up => {
             if app.edit_bg_index > 0 {
                 app.edit_bg_index -= 1;
-                app.edit_bg_state.select(Some(app.edit_bg_index));
+                let idx = app.edit_bg_index;
+                app.edit_bg_state.select(Some(idx));
             }
         }
         KeyCode::Down => {
             if app.edit_bg_index + 1 < app.backgrounds.len() {
                 app.edit_bg_index += 1;
-                app.edit_bg_state.select(Some(app.edit_bg_index));
+                let idx = app.edit_bg_index;
+                app.edit_bg_state.select(Some(idx));
             }
         }
         KeyCode::Tab => {
@@ -269,15 +280,17 @@ pub fn handle_edit_multiclass_key(app: &mut App, key: KeyEvent) {
             KeyCode::Up => {
                 if app.multiclass_add_index > 0 {
                     app.multiclass_add_index -= 1;
+                    let idx = app.multiclass_add_index;
                     app.multiclass_add_state
-                        .select(Some(app.multiclass_add_index));
+                        .select(Some(idx));
                 }
             }
             KeyCode::Down => {
                 if app.multiclass_add_index + 1 < app.classes.len() {
                     app.multiclass_add_index += 1;
+                    let idx = app.multiclass_add_index;
                     app.multiclass_add_state
-                        .select(Some(app.multiclass_add_index));
+                        .select(Some(idx));
                 }
             }
             KeyCode::Enter => {
@@ -383,6 +396,18 @@ pub fn save_edit_character(app: &mut App) {
     };
 
     let rt = app.rt.clone();
+    // Log update payload for debugging level-up saves
+    if let Ok(payload) = serde_json::to_string_pretty(&req) {
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("draft_payload.log")
+            .and_then(|mut f| {
+                use std::io::Write;
+                writeln!(f, "UPDATE /characters/{} => {}\n", id, payload)
+            });
+    }
+
     match rt.block_on(app.client.update_character(id, &req)) {
         Ok(updated) => {
             // Update active character if editing the currently viewed one

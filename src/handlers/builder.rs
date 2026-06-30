@@ -88,17 +88,58 @@ pub fn submit_character_from_builder(app: &mut App) {
     };
 
     let rt = app.rt.clone();
-    match rt.block_on(app.client.create_character(&req)) {
+    let final_character = if let Some(draft_id) = app.builder.draft_id {
+        let update_req = UpdateCharacterRequest {
+            name: req.name.clone(),
+            class_id,
+            strength: req.strength,
+            dexterity: req.dexterity,
+            constitution: req.constitution,
+            intelligence: req.intelligence,
+            wisdom: req.wisdom,
+            charisma: req.charisma,
+            max_hp,
+        // runtime fields required by server validation
+        current_hp: Some(max_hp),
+        temp_hp: Some(0),
+        inspiration: Some(false),
+        notes: notes.clone(),
+        experience_pts: Some(0),
+        race_id: req.race_id,
+        subrace_id: req.subrace_id,
+        background_id: req.background_id,
+        subclass_id: app.builder.subclass_id,
+        ..Default::default()
+    };
+    rt.block_on(app.client.update_character(draft_id, &update_req))
+    } else {
+        match rt.block_on(app.client.create_character(&req)) {
+            Ok(c) => {
+                if let Some(ref notes_text) = notes {
+                    let update = UpdateCharacterRequest {
+                        notes: Some(notes_text.clone()),
+                        ..UpdateCharacterRequest::from_character(&c, class_id)
+                    };
+                    let _ = rt.block_on(app.client.update_character(c.id, &update));
+                }
+                Ok(c)
+            }
+            Err(e) => Err(e),
+        }
+    };
+
+    match final_character {
         Ok(character) => {
             let id = character.id;
             app.active_class_id = class_id;
-            // If lore fields collected, do a follow-up update for notes
-            if let Some(notes_text) = notes {
-                let update = UpdateCharacterRequest {
-                    notes: Some(notes_text),
-                    ..UpdateCharacterRequest::from_character(&character, class_id)
+            
+            // If subclass is selected, update subclass mapping
+            if let Some(subclass_id) = app.builder.subclass_id {
+                let patch_req = crate::models::character::PatchCharacterClassRequest {
+                    subclass_id: Some(subclass_id),
+                    level: Some(1),
                 };
-                let _ = rt.block_on(app.client.update_character(id, &update));
+                let _ = rt.block_on(app.client.patch_character_class(id, class_id, &patch_req));
             }
             // Add starting equipment (option A = standard package)
             if app.builder.equipment_option == Some(0) {

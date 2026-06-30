@@ -329,15 +329,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(senses_header, chunks[6]);
 
     // Passive Perception: 10 + WIS mod + prof bonus if proficient in Perception
-    let wis_manual = app.char_proficiencies.iter()
-        .find(|p| p.category == "saving_throw" && p.name.eq_ignore_ascii_case("WIS"));
-    
-    let is_wis_prof = match wis_manual {
-        Some(_) => true,
-        None => class_prof_saves.iter().any(|s| s.eq_ignore_ascii_case("WIS")),
-    };
-
-    let perc_prof = is_wis_prof || app.has_perception_prof();
+    let perc_prof = app.has_perception_prof();
     let invest_prof = app.has_skill_prof("investigation");
     let int_mod = crate::utils::ability_modifier(character.intelligence);
     let passive_perception = 10 + wis_mod + if perc_prof { prof_bonus } else { 0 };

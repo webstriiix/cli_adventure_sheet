@@ -139,6 +139,7 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
             .highlight_symbol("> ");
     }
 
-    app.sheet_table_state.select(Some(app.selected_list_index));
+    let idx = app.selected_list_index;
+    app.sheet_table_state.select(Some(idx));
     frame.render_stateful_widget(table, table_area, &mut app.sheet_table_state);
 }

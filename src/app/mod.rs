@@ -1,19 +1,22 @@
 use std::collections::HashMap;
 use crossterm::event::{Event, KeyCode, KeyModifiers};
-use ratatui::{Frame, widgets::ListState};
+use ratatui::Frame;
 use uuid::Uuid;
 
 use crate::client::ApiClient;
 use crate::models::{
     app_state::{
         ActionsSubTab, AuthMode, BuilderState, EditSection, MulticlassSection, PickerMode, Screen,
-        SheetTab,
+        SheetTab, CharacterCreationStep,
     },
     character::{Character, CharacterClass, CharacterFeat, CharacterSpell, InventoryItem},
-    compendium::{Background, Class, ClassDetailResponse, ClassFeature, Feat, Item, Race, Spell, SubclassFeature},
+    compendium::{Background, Class, ClassDetailResponse, ClassFeature, Feat, Item, Race, Spell, SubclassFeature, Subrace},
 };
 use crate::ui;
 use crate::utils::storage::StorageManager;
+
+pub mod ui_state;
+pub use ui_state::UiState;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FeaturesSubTab {
@@ -36,7 +39,6 @@ pub enum LevelUpPrompt {
 }
 
 pub mod character;
-
 pub mod equipment;
 pub mod feats;
 pub mod inventory;
@@ -44,162 +46,110 @@ pub mod levelup;
 pub mod multiclass;
 pub mod spells;
 
+/// Application state.
+///
+/// Domain / infrastructure fields live directly on `App`.  All TUI
+/// navigation, widget, and modal state lives in `app.ui` (`UiState`).
+///
+/// `App` implements `Deref<Target = UiState>` so that existing call-sites
+/// (`app.screen`, `app.sidebar_focused`, …) continue to compile during the
+/// transition to explicit `app.ui.*` access.
 pub struct App {
+    // ── Infrastructure ────────────────────────────────────────────────────────
     pub client: ApiClient,
     pub rt: tokio::runtime::Handle,
     pub storage: StorageManager,
     pub is_offline: bool,
-    pub screen: Screen,
-    pub should_quit: bool,
-    pub status_msg: String,
 
-    // Auth
-    pub auth_mode: AuthMode,
-    pub auth_fields: [String; 3],
-    pub auth_focus: usize,
+    // ── TUI / navigation state (all fields in here) ───────────────────────────
+    pub ui: UiState,
 
-    // Compendium data
+    // ── Character builder ─────────────────────────────────────────────────────
+    pub builder: BuilderState,
+
+    // ── Compendium reference data ─────────────────────────────────────────────
     pub classes: Vec<Class>,
     pub races: Vec<Race>,
     pub backgrounds: Vec<Background>,
+    pub subraces: Vec<Subrace>,
 
-    // Character list
+    // ── Character list ────────────────────────────────────────────────────────
     pub characters: Vec<Character>,
-    pub selected_char: usize,
-    pub char_list_state: ListState,
 
-    // Character creation builder state
-    pub builder: BuilderState,
-
-    // Character sheet
+    // ── Active character domain data ──────────────────────────────────────────
     pub active_character: Option<Character>,
-    pub sheet_tab: SheetTab,
-    pub sheet_tab_index: usize,
-    pub actions_sub_tab: ActionsSubTab,
-    pub sidebar_focused: bool,
-    pub content_scroll: usize,
     pub char_feats: Vec<CharacterFeat>,
     pub char_weapon_masteries: Vec<String>,
     pub char_spells: Vec<CharacterSpell>,
-    /// Source of each spell (spell_id → "Spellbook", "Paladin", "Oath of Devotion", etc.)
+    /// spell_id → source label ("Spellbook", "Paladin", "Oath of Devotion", …)
     pub spell_sources: HashMap<i32, String>,
     pub char_inventory: Vec<InventoryItem>,
     pub char_proficiencies: Vec<crate::models::CharacterProficiency>,
-    pub char_classes: Vec<CharacterClass>, // multiclass entries
+    pub char_classes: Vec<CharacterClass>,
     pub char_race_name: String,
     pub char_class_name: String,
-    pub char_caster_progression: String, // cached caster_progression from class data (e.g. "full", "1/2", "1/3")
+    /// Caster progression from class data ("full", "1/2", "1/3", …).
+    pub char_caster_progression: String,
     pub char_bg_name: String,
-    pub active_class_id: i32, // cached class_id for the loaded character
-    pub char_chosen_skills: Vec<String>, // skill proficiencies from background + class choices
-    pub char_expertise_skills: Vec<String>, // skills with double proficiency (expertise)
-    pub char_subclass_name: String, // cached subclass name (empty if none/unknown)
-    /// Class features up to the character's current level (from class detail API).
+    pub active_class_id: i32,
+    /// Skill proficiencies from background + class choices.
+    pub char_chosen_skills: Vec<String>,
+    /// Skills with double proficiency (expertise).
+    pub char_expertise_skills: Vec<String>,
+    /// Subclass display name (empty if none/unknown).
+    pub char_subclass_name: String,
+    /// Class features up to the character's current level.
     pub char_class_features: Vec<ClassFeature>,
-    /// Subclass features up to the character's current level (from class detail API).
+    /// Subclass features up to the character's current level.
     pub char_subclass_features: Vec<SubclassFeature>,
-    /// Race traits parsed from race.entries as (name, description) pairs.
+    /// Race traits as `(name, description)` pairs.
     pub char_race_traits: Vec<(String, String)>,
     /// Aggregated combat actions.
     pub char_actions: Option<crate::models::actions::CharacterActionsResponse>,
-    /// Class resources (LOH, Channel Divinity, etc.)
+    /// Class resources (LOH, Channel Divinity, …).
     pub char_resources: Option<crate::models::ClassResourceResponse>,
-    /// Selection state for the Limited Use sub-tab list.
-    pub actions_list_state: ListState,
-    /// Open action detail modal: (feature name, description). None = closed.
-    pub actions_detail_modal: Option<(String, String)>,
-    /// Open spell detail modal: (spell name, description). None = closed.
-    pub spell_detail_modal: Option<(String, String)>,
 
-    // Combat state
-    pub conditions: Vec<String>, // active conditions (Poisoned, Blinded, etc.)
-    pub concentrating_on: Option<i32>, // spell_id of concentration spell, None if not concentrating
+    // ── Combat state ──────────────────────────────────────────────────────────
+    /// Active conditions (Poisoned, Blinded, …).
+    pub conditions: Vec<String>,
+    /// spell_id of active concentration spell, `None` if not concentrating.
+    pub concentrating_on: Option<i32>,
 
-    // Spell slots and hit dice tracking
-    /// Spell slots from the API class definition (max slots per level), indexed [level-1][slot_idx].
-    /// Empty if not loaded / non-spellcaster.
+    // ── Spell slots and hit dice ──────────────────────────────────────────────
+    /// Max slots per level from the API, indexed [level-1][slot_idx].
     pub char_spell_slots: Vec<Vec<u8>>,
     pub spell_slots_used: [u8; 9],
-    pub spell_level_filter: Option<i32>, // None = All, Some(0) = cantrips, Some(1-9) = spell levels
-    pub spell_level_tab_index: usize,    // 0=All, 1=0(cantrips), 2=1st, ..., 6=5th
-    pub hit_dice_used: [u8; 4],          // Index 0: d6, 1: d8, 2: d10, 3: d12
+    pub hit_dice_used: [u8; 4],
 
-    // Compendium data for pickers
+    // ── Compendium data for pickers ───────────────────────────────────────────
     pub all_spells: Vec<Spell>,
     pub all_items: Vec<Item>,
     pub all_feats: Vec<Feat>,
 
-    // Interactive mode state
-    pub editing_notes: bool,
-    pub notes_buffer: String,
-    pub notes_cursor: usize, // byte offset of cursor in notes_buffer
-    // Sub-views specifically for the Features tab
-    pub features_sub_tab: FeaturesSubTab,
-
-    // Caching for expensive operations
+    // ── Derived / cached data ─────────────────────────────────────────────────
     pub cached_actions: Option<Vec<crate::models::actions::ActionEntry>>,
     pub spells_dirty: bool,
 
-    pub picker_mode: PickerMode,
-    pub picker_search: String,
-    pub picker_selected: usize,
-    pub picker_list_state: ratatui::widgets::ListState,
-    pub selected_list_index: usize,
-    pub sheet_table_state: ratatui::widgets::TableState,
-    /// Item detail modal for inventory view: (name, description). None = closed.
-    pub inventory_item_detail_modal: Option<(String, String)>,
+    // ── Death saves (synced with API) ─────────────────────────────────────────
+    pub death_saves_success: u8,
+    pub death_saves_fail: u8,
+}
 
-    // Death saves — synced with API
-    pub death_saves_success: u8, // 0–3
-    pub death_saves_fail: u8,    // 0–3
+// ── Deref shims (Step 1 transition — remove when call-sites are updated) ─────
 
-    // ASI / Feat choice state
-    pub asi_choice_index: usize, // 0 = ability A, 1 = ability B (for +1/+1), 2 = confirm
-    pub asi_ability_a: usize,    // index into ABILITY_NAMES
-    pub asi_ability_b: usize,    // index into ABILITY_NAMES (for +1/+1 mode)
-    pub asi_ability_c: usize,    // index into ABILITY_NAMES (for +1/+1/+1 mode)
-    pub asi_mode: AsiMode,       // +1/+1
-    pub asi_feat_mode: bool,     // true = FeatPicker was opened from ASI choice overlay
+impl std::ops::Deref for App {
+    type Target = UiState;
+    #[inline]
+    fn deref(&self) -> &UiState {
+        &self.ui
+    }
+}
 
-    // Currency selection (Inventory tab): 0=PP, 1=GP, 2=EP, 3=SP, 4=CP
-    pub currency_selected: usize,
-
-    // Proficiency editing state
-    pub editing_proficiencies: bool,
-    pub selected_ability_idx: usize,
-
-    // Delete confirmation
-    pub delete_confirm: bool,
-
-    // Edit character state
-    pub edit_character_id: Option<Uuid>, // ID of character being edited
-    pub edit_return_to_sheet: bool,      // true = return to CharacterSheet, false = CharacterList
-    pub edit_field_index: usize,         // which field is focused
-    pub edit_buffers: [String; 13], // text buffers: [name, xp, level, max_hp, cur_hp, temp_hp, str, dex, con, int, wis, cha, inspiration]
-    pub edit_race_index: usize,
-    pub edit_class_index: usize,
-    pub edit_subclass_index: usize,
-    pub edit_bg_index: usize,
-    pub edit_race_state: ListState,
-    pub edit_class_state: ListState,
-    pub edit_subclass_state: ListState,
-    pub edit_bg_state: ListState,
-    pub edit_section: EditSection, // which section of the form is active
-
-    // Multiclass picker (in edit screen)
-    pub multiclass_section: MulticlassSection,
-    pub multiclass_add_index: usize, // index into classes list for the "add" picker
-    pub multiclass_add_state: ListState,
-    pub multiclass_selected: usize, // index into char_classes for removal
-
-    // Subclass picker
-    pub class_detail: Option<ClassDetailResponse>, // cached class detail for subclass picker
-    pub subclass_picker_class_id: i32,             // class_id being subclassed (0 = primary)
-
-    // Level-up prompt queue — drained one at a time (in edit screen or sheet)
-    pub level_up_queue: Vec<LevelUpPrompt>,
-    // The prompt currently being shown in the edit screen overlay (None = no overlay)
-    pub level_up_current: Option<LevelUpPrompt>,
+impl std::ops::DerefMut for App {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut UiState {
+        &mut self.ui
+    }
 }
 
 impl App {
@@ -213,31 +163,19 @@ impl App {
             rt,
             storage,
             is_offline,
-            screen: Screen::Login,
-            should_quit: false,
-            status_msg: String::new(),
 
-            auth_mode: AuthMode::Login,
-            auth_fields: [String::new(), String::new(), String::new()],
-            auth_focus: 0,
+            ui: UiState::default(),
+
+            builder: BuilderState::default(),
 
             classes: Vec::new(),
             races: Vec::new(),
             backgrounds: Vec::new(),
+            subraces: Vec::new(),
 
             characters: Vec::new(),
-            selected_char: 0,
-            char_list_state: ListState::default().with_selected(Some(0)),
-
-            builder: BuilderState::default(),
 
             active_character: None,
-            sheet_tab: SheetTab::CoreStats,
-            actions_sub_tab: ActionsSubTab::All,
-            features_sub_tab: FeaturesSubTab::All,
-            sheet_tab_index: 0,
-            sidebar_focused: true,
-            content_scroll: 0,
             char_feats: Vec::new(),
             char_weapon_masteries: Vec::new(),
             char_spells: Vec::new(),
@@ -258,75 +196,21 @@ impl App {
             char_race_traits: Vec::new(),
             char_actions: None,
             char_resources: None,
-            actions_list_state: ListState::default().with_selected(Some(0)),
-            actions_detail_modal: None,
-            spell_detail_modal: None,
             conditions: Vec::new(),
             concentrating_on: None,
             char_spell_slots: Vec::new(),
             spell_slots_used: [0u8; 9],
-            spell_level_filter: None,
-            spell_level_tab_index: 0,
             hit_dice_used: [0u8; 4],
 
             all_spells: Vec::new(),
             all_items: Vec::new(),
             all_feats: Vec::new(),
 
-            editing_notes: false,
-            notes_buffer: String::new(),
-            notes_cursor: 0,
             cached_actions: None,
             spells_dirty: true,
-            picker_mode: PickerMode::None,
-            picker_search: String::new(),
-            picker_selected: 0,
-            picker_list_state: ratatui::widgets::ListState::default().with_selected(Some(0)),
-            selected_list_index: 0,
-            sheet_table_state: ratatui::widgets::TableState::default().with_selected(Some(0)),
-            inventory_item_detail_modal: None,
 
             death_saves_success: 0,
             death_saves_fail: 0,
-
-            asi_choice_index: 0,
-            asi_ability_a: 0,
-            asi_ability_b: 1,
-            asi_ability_c: 2,
-            asi_mode: AsiMode::PlusOneTwo,
-            asi_feat_mode: false,
-
-            currency_selected: 0,
-
-            editing_proficiencies: false,
-            selected_ability_idx: 0,
-
-            delete_confirm: false,
-
-            edit_character_id: None,
-            edit_return_to_sheet: false,
-            edit_field_index: 0,
-            edit_buffers: Default::default(),
-            edit_race_index: 0,
-            edit_class_index: 0,
-            edit_subclass_index: 0,
-            edit_bg_index: 0,
-            edit_race_state: ListState::default().with_selected(Some(0)),
-            edit_class_state: ListState::default().with_selected(Some(0)),
-            edit_subclass_state: ListState::default().with_selected(Some(0)),
-            edit_bg_state: ListState::default().with_selected(Some(0)),
-            edit_section: EditSection::Fields,
-
-            multiclass_section: MulticlassSection::List,
-            multiclass_add_index: 0,
-            multiclass_add_state: ListState::default().with_selected(Some(0)),
-            multiclass_selected: 0,
-
-            class_detail: None,
-            subclass_picker_class_id: 0,
-
-            level_up_queue: Vec::new(),
-            level_up_current: None,
         };
 
         if !app.is_offline {
@@ -367,17 +251,19 @@ impl App {
                 self.client.get_spells(None, None),
                 self.client.get_items(None, None),
                 self.client.get_compendium_feats(None),
+                self.client.get_subraces(),
             )
         });
 
         match core {
-            (Ok(classes), Ok(races), Ok(backgrounds), Ok(spells), Ok(items), Ok(feats)) => {
+            (Ok(classes), Ok(races), Ok(backgrounds), Ok(spells), Ok(items), Ok(feats), Ok(subraces)) => {
                 self.classes = classes.clone();
                 self.races = races.clone();
                 self.backgrounds = backgrounds.clone();
                 self.all_spells = spells.clone();
                 self.all_items = items.clone();
                 self.all_feats = feats.clone();
+                self.subraces = subraces.clone();
 
                 // Save to cache
                 let cache = crate::utils::storage::CompendiumCache {
@@ -387,6 +273,7 @@ impl App {
                     spells,
                     items,
                     feats,
+                    subraces,
                 };
                 self.storage.save_cache("compendium.json", &cache);
                 self.is_offline = false;
@@ -403,6 +290,7 @@ impl App {
                     self.all_spells = cache.spells;
                     self.all_items = cache.items;
                     self.all_feats = cache.feats;
+                    self.subraces = cache.subraces;
                     self.status_msg = "Loaded compendium from cache (Offline).".into();
                     self.is_offline = true;
                 }
@@ -420,7 +308,8 @@ impl App {
                 if self.selected_char >= self.characters.len() {
                     self.selected_char = self.characters.len().saturating_sub(1);
                 }
-                self.char_list_state.select(Some(self.selected_char));
+                let idx = self.selected_char;
+                self.char_list_state.select(Some(idx));
             }
             Err(_) => {
                 // Fallback to cache
@@ -431,7 +320,8 @@ impl App {
                     if self.selected_char >= self.characters.len() {
                         self.selected_char = self.characters.len().saturating_sub(1);
                     }
-                    self.char_list_state.select(Some(self.selected_char));
+                    let idx = self.selected_char;
+                    self.char_list_state.select(Some(idx));
                 }
             }
         }
@@ -571,16 +461,29 @@ impl App {
 
                     if let Some(props) = &item.properties {
                         if !props.is_empty() {
-                            desc.push_str("\n\nProperties: ");
-                            desc.push_str(&props.join(", "));
+                            desc.push_str("\n\nProperties:\n");
+                            for prop in props {
+                                let code = crate::utils::weapon_properties::parse_property_code(prop);
+                                let prop_name = crate::utils::weapon_properties::property_name(code);
+                                let prop_desc = crate::utils::weapon_properties::property_description(code);
+                                desc.push_str(&format!("{}. {}\n", prop_name, prop_desc));
+                            }
                         }
                     }
 
-                    // Mastery details
-                    let mastery_name = crate::utils::weapon_mastery::get_mastery_property(&item.name);
-                    if mastery_name != "—" && self.char_weapon_masteries.iter().any(|m| m.eq_ignore_ascii_case(&item.name)) {
-                        let mastery_desc = crate::utils::weapon_mastery::get_mastery_description(mastery_name);
-                        desc.push_str(&format!("\n\nMastery: {} ({})\n{}", mastery_name, item.name, mastery_desc));
+                    // Always check for mastery info from backend
+                    if let Some(masteries) = &item.mastery {
+                        if !masteries.is_empty() {
+                            desc.push_str("\nMastery:\n");
+                            for mastery in masteries {
+                                let code = crate::utils::weapon_properties::parse_property_code(mastery);
+                                let mastery_name = crate::utils::weapon_mastery::get_mastery_property(code);
+                                let mastery_desc = crate::utils::weapon_mastery::get_mastery_description(mastery_name);
+                                if mastery_name != "—" {
+                                    desc.push_str(&format!("{}: {}\n", mastery_name, mastery_desc));
+                                }
+                            }
+                        }
                     }
 
                     derived.push(crate::models::actions::ActionEntry {
@@ -1290,6 +1193,157 @@ impl App {
                     && !actions.attack.iter().any(|a| a.name == la.name)
                 {
                     actions.attack.push(la);
+                }
+            }
+        }
+    }
+
+    pub fn is_online(&mut self) -> bool {
+        let rt = self.rt.clone();
+        let online = rt.block_on(self.client.check_health());
+        self.is_offline = !online;
+        online
+    }
+
+    pub fn save_draft(&mut self) -> bool {
+        let draft = crate::models::CharacterDraft {
+            current_step: match self.builder.step {
+                CharacterCreationStep::Class => 1,
+                CharacterCreationStep::Background => 2,
+                CharacterCreationStep::Species => 3,
+                CharacterCreationStep::Abilities => 4,
+                CharacterCreationStep::Equipment => 5,
+            },
+            class_id: self.builder.class_id,
+            level: self.builder.level,
+            subclass_id: self.builder.subclass_id,
+            name: self.builder.name.clone(),
+            personality: self.builder.trait_text.clone(),
+            background_id: self.builder.bg_id,
+            background_feat_id: self.builder.background_feat_id,
+            species_id: self.builder.race_id,
+            lineage_id: self.builder.lineage_id,
+            abilities: self.builder.abilities,
+            equipment_option: self.builder.equipment_option,
+        };
+
+        let draft_json = serde_json::to_string(&draft).unwrap_or_default();
+        let draft_name = if self.builder.name.trim().is_empty() {
+            "[DRAFT] Untitled".to_string()
+        } else {
+            format!("[DRAFT] {}", self.builder.name.trim())
+        };
+
+        let rt = self.rt.clone();
+        let client = self.client.clone();
+        let draft_id = self.builder.draft_id;
+
+        let class_id = self.builder.class_id.unwrap_or_else(|| {
+            self.classes.first().map(|c| c.id).unwrap_or(1)
+        });
+
+        if !self.is_online() {
+            self.status_msg = "Offline! Cannot save draft to server.".to_string();
+            return false;
+        }
+
+        if let Some(id) = draft_id {
+            let req = crate::models::UpdateCharacterRequest {
+                name: draft_name,
+                class_id,
+                strength: self.builder.abilities[0],
+                dexterity: self.builder.abilities[1],
+                constitution: self.builder.abilities[2],
+                intelligence: self.builder.abilities[3],
+                wisdom: self.builder.abilities[4],
+                charisma: self.builder.abilities[5],
+                max_hp: 10,
+            // Ensure required runtime fields are present for server validation
+            current_hp: Some(10),
+            temp_hp: Some(0),
+            inspiration: Some(false),
+            notes: Some(draft_json.clone()),
+            // Server expects experience_pts present for PUT — use 0 for drafts
+            experience_pts: Some(0),
+            ..Default::default()
+            };
+            // Log payload for debugging
+            if let Ok(payload) = serde_json::to_string_pretty(&req) {
+                let _ = std::fs::OpenOptions::new().create(true).append(true).open("draft_payload.log").and_then(|mut f| {
+                    use std::io::Write;
+                    writeln!(f, "UPDATE /characters/{} => {}\n", id, payload)
+                });
+            }
+            match rt.block_on(client.update_character(id, &req)) {
+                Ok(_) => {
+                    self.status_msg = "Draft auto-saved.".to_string();
+                    true
+                }
+                Err(e) => {
+                    self.status_msg = format!("Failed to auto-save draft: {e}");
+                    false
+                }
+            }
+        } else {
+            let req = crate::models::CreateCharacterRequest {
+                name: draft_name,
+                class_id,
+                race_id: self.builder.race_id,
+                subrace_id: self.builder.lineage_id,
+                background_id: self.builder.bg_id,
+                strength: self.builder.abilities[0],
+                dexterity: self.builder.abilities[1],
+                constitution: self.builder.abilities[2],
+                intelligence: self.builder.abilities[3],
+                wisdom: self.builder.abilities[4],
+                charisma: self.builder.abilities[5],
+                max_hp: 10,
+                bonus_feat_id: None,
+                background_feat_id: self.builder.background_feat_id,
+            };
+            // Log create payload for debugging
+            if let Ok(payload) = serde_json::to_string_pretty(&req) {
+                let _ = std::fs::OpenOptions::new().create(true).append(true).open("draft_payload.log").and_then(|mut f| {
+                    use std::io::Write;
+                    writeln!(f, "CREATE /characters => {}\n", payload)
+                });
+            }
+            match rt.block_on(client.create_character(&req)) {
+                Ok(character) => {
+                    self.builder.draft_id = Some(character.id);
+                    let update_req = crate::models::UpdateCharacterRequest {
+                        name: character.name.clone(),
+                        class_id,
+                        strength: character.strength,
+                        dexterity: character.dexterity,
+                        constitution: character.constitution,
+                        intelligence: character.intelligence,
+                        wisdom: character.wisdom,
+                        charisma: character.charisma,
+                        max_hp: character.max_hp,
+                        // include present runtime fields from created character
+                        current_hp: Some(character.current_hp),
+                        temp_hp: Some(character.temp_hp),
+                        inspiration: Some(character.inspiration),
+                        notes: Some(draft_json),
+                        // include experience pts from created character
+                        experience_pts: Some(character.experience_pts),
+                        ..Default::default()
+                    };
+                    // Log update payload for debugging
+                    if let Ok(payload) = serde_json::to_string_pretty(&update_req) {
+                        let _ = std::fs::OpenOptions::new().create(true).append(true).open("draft_payload.log").and_then(|mut f| {
+                            use std::io::Write;
+                            writeln!(f, "UPDATE /characters/{} => {}\n", character.id, payload)
+                        });
+                    }
+                    let _ = rt.block_on(client.update_character(character.id, &update_req));
+                    self.status_msg = "Draft created and saved.".to_string();
+                    true
+                }
+                Err(e) => {
+                    self.status_msg = format!("Failed to create draft: {e}");
+                    false
                 }
             }
         }

@@ -503,7 +503,8 @@ fn render_feat_picker(app: &mut App, frame: &mut Frame, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol(" > ");
-        app.picker_list_state.select(Some(app.picker_selected));
+        let idx = app.picker_selected;
+        app.picker_list_state.select(Some(idx));
         frame.render_stateful_widget(list, chunks[3], &mut app.picker_list_state);
     }
 }
@@ -709,7 +710,8 @@ fn render_list_picker(app: &mut App, frame: &mut Frame, area: Rect, is_items: bo
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol(" > ");
-        app.picker_list_state.select(Some(app.picker_selected));
+        let idx = app.picker_selected;
+        app.picker_list_state.select(Some(idx));
         frame.render_stateful_widget(list, chunks[3], &mut app.picker_list_state);
     }
 
@@ -788,7 +790,34 @@ fn render_list_picker(app: &mut App, frame: &mut Frame, area: Rect, is_items: bo
                         "Properties: ",
                         Style::default().add_modifier(Modifier::BOLD),
                     )]));
-                    lines.push(Line::from(format!("  {}", props.join(", "))));
+                    
+                    // Display formatted property descriptions
+                    let prop_lines = crate::utils::weapon_properties::format_all_properties(props);
+                    for prop_line in prop_lines {
+                        if prop_line.is_empty() {
+                            lines.push(Line::from(""));
+                        } else {
+                            lines.push(Line::from(format!("  {}", prop_line)));
+                        }
+                    }
+                }
+            }
+
+            // Mastery
+            if let Some(masteries) = &item.mastery {
+                if !masteries.is_empty() {
+                    lines.push(Line::from(vec![Span::styled(
+                        "Mastery: ",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )]));
+                    
+                    for mastery in masteries {
+                        let code = crate::utils::weapon_properties::parse_property_code(mastery);
+                        let name = crate::utils::weapon_mastery::get_mastery_property(code);
+                        let desc = crate::utils::weapon_mastery::get_mastery_description(name);
+                        
+                        lines.push(Line::from(format!("  {}. {}", name, desc)));
+                    }
                     lines.push(Line::from(""));
                 }
             }
@@ -829,8 +858,8 @@ fn render_list_picker(app: &mut App, frame: &mut Frame, area: Rect, is_items: bo
 }
 
 fn render_action_detail_modal(name: &str, description: &str, frame: &mut Frame, area: Rect) {
-    let popup_width = 60.min(area.width.saturating_sub(4));
-    let popup_height = 20.min(area.height.saturating_sub(4));
+    let popup_width = 90.min(area.width.saturating_sub(4));
+    let popup_height = (area.height.saturating_sub(4)).max(15);
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let y = (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -881,8 +910,8 @@ fn render_action_detail_modal(name: &str, description: &str, frame: &mut Frame, 
 }
 
 fn render_inventory_item_detail_modal(name: &str, description: &str, frame: &mut Frame, area: Rect) {
-    let popup_width = 70.min(area.width.saturating_sub(4));
-    let popup_height = 25.min(area.height.saturating_sub(4));
+    let popup_width = 90.min(area.width.saturating_sub(4));
+    let popup_height = (area.height.saturating_sub(4)).max(15);
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let y = (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);

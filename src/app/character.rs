@@ -37,7 +37,8 @@ impl App {
             .position(|r| Some(r.id) == character.race_id)
             .unwrap_or(0);
         self.edit_race_state = ListState::default();
-        self.edit_race_state.select(Some(self.edit_race_index));
+        let idx = self.edit_race_index;
+        self.edit_race_state.select(Some(idx));
 
         self.edit_bg_index = if let Some(bg_id) = character.background_id {
             self.backgrounds
@@ -48,7 +49,8 @@ impl App {
             0
         };
         self.edit_bg_state = ListState::default();
-        self.edit_bg_state.select(Some(self.edit_bg_index));
+        let idx = self.edit_bg_index;
+        self.edit_bg_state.select(Some(idx));
 
         // Authoritative fetch of classes for this character to ensure subclass info is accurate
         let rt = self.rt.clone();
@@ -91,7 +93,8 @@ impl App {
             .position(|c| c.id == current_class_id)
             .unwrap_or(0);
         self.edit_class_state = ListState::default();
-        self.edit_class_state.select(Some(self.edit_class_index));
+        let idx = self.edit_class_index;
+        self.edit_class_state.select(Some(idx));
 
         // Initialize subclass picker index from fetched data
         let current_subclass_id = self.char_classes.first().and_then(|cc| cc.subclass_id);
@@ -105,7 +108,8 @@ impl App {
             })
             .unwrap_or(0);
         self.edit_subclass_state = ListState::default();
-        self.edit_subclass_state.select(Some(self.edit_subclass_index));
+        let idx = self.edit_subclass_index;
+        self.edit_subclass_state.select(Some(idx));
 
         self.multiclass_selected = 0;
         self.multiclass_section = crate::models::app_state::MulticlassSection::List;

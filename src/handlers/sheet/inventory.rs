@@ -85,9 +85,33 @@ fn get_item_description(item: &crate::models::compendium::Item) -> String {
     };
     parts.push(format!("Weight: {}  |  Value: {}", weight_str, value_str));
 
+    // Properties with full descriptions
     if let Some(props) = &item.properties {
         if !props.is_empty() {
-            parts.push(format!("Properties: {}", props.join(", ")));
+            parts.push(String::new());
+            parts.push("Properties:".to_string());
+            for prop in props {
+                let code = crate::utils::weapon_properties::parse_property_code(prop);
+                let name = crate::utils::weapon_properties::property_name(code);
+                let desc = crate::utils::weapon_properties::property_description(code);
+                parts.push(format!("{}. {}", name, desc));
+            }
+        }
+    }
+
+    // Mastery with full descriptions
+    if let Some(masteries) = &item.mastery {
+        if !masteries.is_empty() {
+            parts.push(String::new());
+            parts.push("Mastery:".to_string());
+            for mastery in masteries {
+                let code = crate::utils::weapon_properties::parse_property_code(mastery);
+                let name = crate::utils::weapon_mastery::get_mastery_property(code);
+                let desc = crate::utils::weapon_mastery::get_mastery_description(name);
+                if name != "—" {
+                    parts.push(format!("{}: {}", name, desc));
+                }
+            }
         }
     }
 
@@ -113,8 +137,10 @@ fn get_item_description(item: &crate::models::compendium::Item) -> String {
 }
 
 pub fn adjust_currency(app: &mut App, delta: i32) {
+    let currency_idx = app.currency_selected;
+    let currency_name = ["PP", "GP", "EP", "SP", "CP"][currency_idx];
     if let Some(ref mut ch) = app.active_character {
-        let field = match app.currency_selected {
+        let field = match currency_idx {
             0 => &mut ch.pp,
             1 => &mut ch.gp,
             2 => &mut ch.ep,
@@ -124,7 +150,6 @@ pub fn adjust_currency(app: &mut App, delta: i32) {
         };
         *field = (*field + delta).max(0);
         let new_val = *field;
-        let currency_name = ["PP", "GP", "EP", "SP", "CP"][app.currency_selected];
 
         // Persist via API
         let character = ch.clone();

@@ -28,7 +28,6 @@ const F_RACE: usize = 13;
 const F_CLASS: usize = 14;
 const F_SUBCLASS: usize = 15;
 const F_BG: usize = 16;
-const F_MULTICLASS: usize = 17;
 
 pub fn render(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
