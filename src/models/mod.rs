@@ -4,6 +4,7 @@ pub mod character;
 pub mod compendium;
 pub mod error;
 pub mod features;
+pub mod rules;
 
 pub use auth::{AuthResponse, LoginRequest, SignupRequest};
 pub use character::{

@@ -111,8 +111,8 @@ impl App {
             Ok(updated_char) => {
                 let label = format!(
                     "+1 {} and +1 {}",
-                    crate::utils::ABILITY_NAMES[self.asi_ability_a],
-                    crate::utils::ABILITY_NAMES[self.asi_ability_b],
+                    crate::models::rules::ABILITY_NAMES[self.asi_ability_a],
+                    crate::models::rules::ABILITY_NAMES[self.asi_ability_b],
                 );
                 self.active_character = Some(updated_char);
                 self.status_msg = format!("ASI applied: {}", label);
@@ -215,7 +215,7 @@ impl App {
                 for ab in ability_arr {
                     for key in ["str", "dex", "con", "int", "wis", "cha"] {
                         if let Some(req_val) = ab.get(key).and_then(|v| v.as_i64()) {
-                            if crate::utils::ch_ability_score(ch, key) < req_val as i32 {
+                            if crate::models::rules::ch_ability_score(ch, key) < req_val as i32 {
                                 return false;
                             }
                         }
@@ -225,7 +225,7 @@ impl App {
 
             // Level prerequisite: {"level": 4}
             if let Some(req_level) = prereq.get("level").and_then(|v| v.as_i64()) {
-                let char_level = crate::utils::level_from_xp(ch.experience_pts);
+                let char_level = crate::models::rules::level_from_xp(ch.experience_pts);
                 if char_level < req_level as i32 {
                     return false;
                 }

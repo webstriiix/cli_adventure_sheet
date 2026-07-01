@@ -36,17 +36,10 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         None => return,
     };
 
-    let level = crate::utils::level_from_xp(character.experience_pts);
-    let prof_bonus = crate::utils::proficiency_bonus(level);
+    let level = crate::models::rules::level_from_xp(character.experience_pts);
+    let prof_bonus = crate::models::rules::proficiency_bonus(level);
 
-    let scores = [
-        character.strength,
-        character.dexterity,
-        character.constitution,
-        character.intelligence,
-        character.wisdom,
-        character.charisma,
-    ];
+
 
     let header = Row::new(vec!["", "  Skill", "Ability", "Modifier"])
         .style(
@@ -58,19 +51,14 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
 
     let rows: Vec<Row> = SKILLS
         .iter()
-        .map(|(skill, ability, idx)| {
-            let base_mod = crate::utils::ability_modifier(scores[*idx]);
-            let skill_lower = skill.to_lowercase();
-            let proficient = app.has_skill_prof(&skill_lower);
-            let expert = app.has_expertise(&skill_lower);
-            let bonus = if expert {
-                prof_bonus * 2
-            } else if proficient {
-                prof_bonus
-            } else {
-                0
-            };
-            let total_mod = base_mod + bonus;
+        .map(|(skill, ability, _idx)| {
+            let (proficient, expert, total_mod) = character.get_skill_modifier(
+                skill,
+                ability,
+                &app.char_proficiencies,
+                &app.char_chosen_skills,
+                &app.char_expertise_skills,
+            );
 
             let dot = if expert {
                 Span::styled("◆ ", Style::default().fg(Color::Cyan))
@@ -107,7 +95,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
                 ratatui::widgets::Cell::from(Line::from(dot)),
                 ratatui::widgets::Cell::from(format!("  {skill}")).style(name_style),
                 ratatui::widgets::Cell::from(ability.to_string()).style(Style::default().fg(Color::DarkGray)),
-                ratatui::widgets::Cell::from(crate::utils::format_modifier(total_mod)).style(mod_style),
+                ratatui::widgets::Cell::from(crate::models::rules::format_modifier(total_mod)).style(mod_style),
             ])
             .style(if is_selected { Style::default().bg(Color::Rgb(50, 50, 80)) } else { Style::default() })
         })
@@ -124,7 +112,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     let mut info_spans = vec![
         Span::styled("  Prof Bonus: ", Style::default().fg(Color::DarkGray)),
         Span::styled(
-            crate::utils::format_modifier(prof_bonus),
+            crate::models::rules::format_modifier(prof_bonus),
             Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
         ),
         Span::styled(

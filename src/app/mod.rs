@@ -18,6 +18,15 @@ use crate::utils::storage::StorageManager;
 pub mod ui_state;
 pub use ui_state::UiState;
 
+pub mod character;
+pub mod equipment;
+pub mod events;
+pub mod feats;
+pub mod inventory;
+pub mod levelup;
+pub mod multiclass;
+pub mod spells;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FeaturesSubTab {
     All,
@@ -37,14 +46,6 @@ pub enum LevelUpPrompt {
     SubclassChoice { class_id: i32, class_name: String },
     AsiOrFeat { class_name: String },
 }
-
-pub mod character;
-pub mod equipment;
-pub mod feats;
-pub mod inventory;
-pub mod levelup;
-pub mod multiclass;
-pub mod spells;
 
 /// Application state.
 ///
@@ -349,14 +350,14 @@ impl App {
             }
 
             match self.screen {
-                Screen::Login => crate::handlers::auth::handle_login_key(self, key),
+                Screen::Login => crate::app::events::auth::handle_login_key(self, key),
                 Screen::CharacterList => {
-                    crate::handlers::character_list::handle_char_list_key(self, key)
+                    crate::app::events::character_list::handle_char_list_key(self, key)
                 }
                 Screen::CharacterBuilder => crate::ui::builder::handle_key(self, key),
-                Screen::CharacterSheet => crate::handlers::sheet::handle_sheet_key(self, key),
+                Screen::CharacterSheet => crate::app::events::sheet::handle_sheet_key(self, key),
                 Screen::EditCharacter => {
-                    crate::handlers::edit::handle_edit_character_key(self, key)
+                    crate::app::events::edit::handle_edit_character_key(self, key)
                 }
             }
         }
@@ -423,10 +424,10 @@ impl App {
             None => return derived,
         };
 
-        let str_mod = crate::utils::ability_modifier(character.strength);
-        let dex_mod = crate::utils::ability_modifier(character.dexterity);
-        let level = crate::utils::level_from_xp(character.experience_pts);
-        let prof = crate::utils::proficiency_bonus(level);
+        let str_mod = crate::models::rules::ability_modifier(character.strength);
+        let dex_mod = crate::models::rules::ability_modifier(character.dexterity);
+        let level = crate::models::rules::level_from_xp(character.experience_pts);
+        let prof = crate::models::rules::proficiency_bonus(level);
 
         // Scan inventory for weapons
         for inv in self.char_inventory.iter().filter(|i| i.is_equipped) {
@@ -596,7 +597,7 @@ impl App {
         let level = self
             .active_character
             .as_ref()
-            .map(|c| crate::utils::level_from_xp(c.experience_pts))
+            .map(|c| crate::models::rules::level_from_xp(c.experience_pts))
             .unwrap_or(1);
 
         if !self.char_spell_slots.is_empty() {
@@ -606,7 +607,7 @@ impl App {
                 .copied()
                 .unwrap_or(0)
         } else {
-            crate::utils::spell_slots_max(&self.char_caster_progression, level, slot_idx)
+            crate::models::rules::spell_slots_max(&self.char_caster_progression, level, slot_idx)
         }
     }
 
@@ -638,20 +639,20 @@ impl App {
     pub fn spell_save_dc(&self) -> Option<i32> {
         let ability = self.spellcasting_ability()?;
         let character = self.active_character.as_ref()?;
-        let score = crate::utils::ch_ability_score(character, ability);
-        let modifier = crate::utils::ability_modifier(score);
-        let level = crate::utils::level_from_xp(character.experience_pts);
-        let prof = crate::utils::proficiency_bonus(level);
+        let score = crate::models::rules::ch_ability_score(character, ability);
+        let modifier = crate::models::rules::ability_modifier(score);
+        let level = crate::models::rules::level_from_xp(character.experience_pts);
+        let prof = crate::models::rules::proficiency_bonus(level);
         Some(8 + prof + modifier)
     }
 
     pub fn spell_attack_bonus(&self) -> Option<i32> {
         let ability = self.spellcasting_ability()?;
         let character = self.active_character.as_ref()?;
-        let score = crate::utils::ch_ability_score(character, ability);
-        let modifier = crate::utils::ability_modifier(score);
-        let level = crate::utils::level_from_xp(character.experience_pts);
-        let prof = crate::utils::proficiency_bonus(level);
+        let score = crate::models::rules::ch_ability_score(character, ability);
+        let modifier = crate::models::rules::ability_modifier(score);
+        let level = crate::models::rules::level_from_xp(character.experience_pts);
+        let prof = crate::models::rules::proficiency_bonus(level);
         Some(prof + modifier)
     }
 
@@ -677,10 +678,10 @@ impl App {
                         "charisma" => "cha",
                         _ => "cha",
                     };
-                    let score = crate::utils::ch_ability_score(character, ability_key);
-                    let modifier = crate::utils::ability_modifier(score);
-                    let char_level = crate::utils::level_from_xp(character.experience_pts);
-                    let prof = crate::utils::proficiency_bonus(char_level);
+                    let score = crate::models::rules::ch_ability_score(character, ability_key);
+                    let modifier = crate::models::rules::ability_modifier(score);
+                    let char_level = crate::models::rules::level_from_xp(character.experience_pts);
+                    let prof = crate::models::rules::proficiency_bonus(char_level);
 
                     results.push((
                         class_data.name.clone(),
@@ -696,8 +697,8 @@ impl App {
         if results.is_empty() {
             if let (Some(atk), Some(dc)) = (self.spell_attack_bonus(), self.spell_save_dc()) {
                 let ability = self.spellcasting_ability().unwrap_or("");
-                let score = crate::utils::ch_ability_score(character, ability);
-                let modifier = crate::utils::ability_modifier(score);
+                let score = crate::models::rules::ch_ability_score(character, ability);
+                let modifier = crate::models::rules::ability_modifier(score);
                 results.push((self.char_class_name.clone(), modifier, atk, dc));
             }
         }
@@ -766,7 +767,7 @@ impl App {
         let char_level = self
             .active_character
             .as_ref()
-            .map(|c| crate::utils::level_from_xp(c.experience_pts))
+            .map(|c| crate::models::rules::level_from_xp(c.experience_pts))
             .unwrap_or(1);
 
         // Collect (spell_id, source_name) pairs
@@ -1049,41 +1050,7 @@ impl App {
         }
     }
 
-    pub fn has_skill_prof(&self, skill: &str) -> bool {
-        let skill_lower = skill.to_lowercase();
-        // Check manual proficiencies first
-        if self.char_proficiencies.iter().any(|p| {
-            p.category == "skill"
-                && p.name.to_lowercase() == skill_lower
-                && (p.proficiency_type == "proficiency" || p.proficiency_type == "expertise")
-        }) {
-            return true;
-        }
 
-        self.char_chosen_skills
-            .iter()
-            .any(|s| s.to_lowercase() == skill_lower)
-    }
-
-    pub fn has_expertise(&self, skill: &str) -> bool {
-        let skill_lower = skill.to_lowercase();
-        // Check manual proficiencies first
-        if self.char_proficiencies.iter().any(|p| {
-            p.category == "skill"
-                && p.name.to_lowercase() == skill_lower
-                && p.proficiency_type == "expertise"
-        }) {
-            return true;
-        }
-
-        self.char_expertise_skills
-            .iter()
-            .any(|s| s.to_lowercase().contains(&skill_lower))
-    }
-
-    pub fn has_perception_prof(&self) -> bool {
-        self.has_skill_prof("perception")
-    }
 
     pub fn always_prepared_spell_ids(&self) -> Vec<i32> {
         self.spell_sources

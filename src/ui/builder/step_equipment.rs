@@ -161,7 +161,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
             }
 
             // Finalize and submit
-            crate::handlers::builder::submit_character_from_builder(app);
+            crate::app::events::builder::submit_character_from_builder(app);
         }
         _ => {}
     }

@@ -41,7 +41,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             .characters
             .iter()
             .map(|ch| {
-                let level = crate::utils::level_from_xp(ch.experience_pts);
+                let level = crate::models::rules::level_from_xp(ch.experience_pts);
                 let hp_color = if ch.current_hp <= ch.max_hp / 4 {
                     Color::Red
                 } else if ch.current_hp <= ch.max_hp / 2 {

@@ -1,6 +1,5 @@
 mod app;
 mod client;
-mod handlers;
 mod models;
 mod ui;
 mod utils;

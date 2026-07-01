@@ -18,7 +18,7 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
         None => return,
     };
 
-    let level = crate::utils::level_from_xp(character.experience_pts);
+    let level = crate::models::rules::level_from_xp(character.experience_pts);
     let caster_prog = app.char_caster_progression.clone();
     let is_caster = (0..9).any(|i| app.spell_slots_max_for_slot(i) > 0);
 
@@ -75,7 +75,7 @@ fn render_stats(app: &App, frame: &mut Frame, area: Rect) {
 
     // Build box data: (title, value_string) for each stat
     // Combine multi-class values with " / "
-    let mod_values: Vec<String> = classes.iter().map(|(_, m, _, _)| crate::utils::format_modifier(*m)).collect();
+    let mod_values: Vec<String> = classes.iter().map(|(_, m, _, _)| crate::models::rules::format_modifier(*m)).collect();
     let atk_values: Vec<String> = classes.iter().map(|(_, _, a, _)| a.to_string()).collect();
     let dc_values: Vec<String> = classes.iter().map(|(_, _, _, d)| d.to_string()).collect();
 
@@ -83,7 +83,7 @@ fn render_stats(app: &App, frame: &mut Frame, area: Rect) {
     let Some(character) = app.active_character.as_ref() else {
         return;
     };
-    let level = crate::utils::level_from_xp(character.experience_pts);
+    let level = crate::models::rules::level_from_xp(character.experience_pts);
     let always_prepared = app.always_prepared_spell_ids();
     let prepared_current = app
         .char_spells
@@ -93,7 +93,7 @@ fn render_stats(app: &App, frame: &mut Frame, area: Rect) {
     let prepared_values: Vec<String> = classes
         .iter()
         .map(|(name, m, _, _)| {
-            let max = crate::utils::max_prepared_spells(name, level, *m);
+            let max = crate::models::rules::max_prepared_spells(name, level, *m);
             format!("{}/{}", prepared_current, max)
         })
         .collect();
@@ -273,7 +273,7 @@ fn render_spell_list(app: &mut App, frame: &mut Frame, area: Rect) {
         let time = format_casting_time(spell);
         let range = format_range(spell);
         let hit_dc = if spell.school == "V" || spell.school == "E" {
-            spell_atk.map(|a| crate::utils::format_modifier(a)).unwrap_or_else(|| "--".to_string())
+            spell_atk.map(|a| crate::models::rules::format_modifier(a)).unwrap_or_else(|| "--".to_string())
         } else {
             "--".to_string()
         };

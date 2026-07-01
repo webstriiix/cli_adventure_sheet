@@ -71,7 +71,7 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
         None => return,
     };
 
-    let level = crate::utils::level_from_xp(character.experience_pts);
+    let level = crate::models::rules::level_from_xp(character.experience_pts);
     let hp_color = if character.current_hp <= character.max_hp / 4 {
         Color::Red
     } else if character.current_hp <= character.max_hp / 2 {
@@ -510,7 +510,7 @@ fn render_feat_picker(app: &mut App, frame: &mut Frame, area: Rect) {
 }
 
 fn render_asi_choice(app: &App, frame: &mut Frame, area: Rect) {
-    use crate::utils::ABILITY_NAMES;
+    use crate::models::rules::ABILITY_NAMES;
 
     let mut lines: Vec<Line> = vec![
         Line::from(Span::styled(
@@ -543,7 +543,7 @@ fn render_asi_choice(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 fn render_condition_picker(app: &App, frame: &mut Frame, area: Rect) {
-    use crate::handlers::sheet::ALL_CONDITIONS;
+    use crate::app::events::sheet::ALL_CONDITIONS;
     use ratatui::widgets::{List, ListItem, ListState};
 
     let items: Vec<ListItem> = ALL_CONDITIONS

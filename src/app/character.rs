@@ -15,7 +15,7 @@ impl App {
 
         self.edit_buffers[0] = character.name.clone();
         self.edit_buffers[1] = character.experience_pts.to_string();
-        self.edit_buffers[2] = crate::utils::level_from_xp(character.experience_pts).to_string();
+        self.edit_buffers[2] = crate::models::rules::level_from_xp(character.experience_pts).to_string();
         self.edit_buffers[3] = character.max_hp.to_string();
         self.edit_buffers[4] = character.current_hp.to_string();
         self.edit_buffers[5] = character.temp_hp.to_string();
@@ -136,7 +136,7 @@ impl App {
                 // Fetch character classes from API (includes authoritative subclass data)
                 let char_classes_result = rt.block_on(self.client.get_character_classes(c.id));
 
-                let level = crate::utils::level_from_xp(c.experience_pts);
+                let level = crate::models::rules::level_from_xp(c.experience_pts);
 
                 // Parallel fetch all related data
                 let (feats, spells, inventory, slots, hit_dice, detail, actions, resources, profs) =
@@ -249,7 +249,7 @@ impl App {
         self.class_detail = cache.class_detail;
 
         // Character level needed early for class initialization
-        let char_level = crate::utils::level_from_xp(c.experience_pts);
+        let char_level = crate::models::rules::level_from_xp(c.experience_pts);
 
         // UI State — restore char_classes from cache if available
         self.char_classes = if !cache.char_classes.is_empty() {
@@ -550,7 +550,7 @@ impl App {
 
         let char_level = self.active_character
             .as_ref()
-            .map(|c| crate::utils::level_from_xp(c.experience_pts))
+            .map(|c| crate::models::rules::level_from_xp(c.experience_pts))
             .unwrap_or(1);
 
         self.char_subclass_features = self

@@ -89,7 +89,7 @@ fn render_fields(app: &App, frame: &mut Frame, area: Rect) {
 
     // Compute level from XP buffer
     let xp: i32 = app.edit_buffers[F_XP].parse().unwrap_or(0);
-    let level = crate::utils::level_from_xp(xp);
+    let level = crate::models::rules::level_from_xp(xp);
 
     let field_defs: &[(&str, usize)] = &[
         ("Name", F_NAME),
@@ -559,7 +559,7 @@ fn render_level_up_overlay(app: &mut App, frame: &mut Frame, area: Rect) {
                 let mut state = ListState::default().with_selected(Some(app.picker_selected));
                 frame.render_stateful_widget(list, chunks[2], &mut state);
             } else {
-                use crate::utils::ABILITY_NAMES;
+                use crate::models::rules::ABILITY_NAMES;
                 let mut lines = vec![
                     Line::from(""),
                     Line::from(Span::styled(

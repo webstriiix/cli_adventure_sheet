@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-// ── Character ──
+use crate::models::rules;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Character {
@@ -40,6 +40,98 @@ pub struct Character {
     pub pp: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl Character {
+    pub fn level(&self) -> i32 {
+        rules::level_from_xp(self.experience_pts)
+    }
+
+    pub fn proficiency_bonus(&self) -> i32 {
+        rules::proficiency_bonus(self.level())
+    }
+
+    pub fn get_ability_score(&self, ability: &str) -> i32 {
+        rules::ch_ability_score(self, ability)
+    }
+
+    pub fn ability_modifier(&self, ability: &str) -> i32 {
+        rules::ability_modifier(self.get_ability_score(ability))
+    }
+
+    pub fn has_skill_proficiency(
+        &self,
+        skill: &str,
+        manual_profs: &[CharacterProficiency],
+        chosen_skills: &[String],
+    ) -> bool {
+        let skill_lower = skill.to_lowercase();
+        if manual_profs.iter().any(|p| {
+            p.category == "skill"
+                && p.name.to_lowercase() == skill_lower
+                && (p.proficiency_type == "proficiency" || p.proficiency_type == "expertise")
+        }) {
+            return true;
+        }
+        chosen_skills.iter().any(|s| s.to_lowercase() == skill_lower)
+    }
+
+    pub fn has_skill_expertise(
+        &self,
+        skill: &str,
+        manual_profs: &[CharacterProficiency],
+        expertise_skills: &[String],
+    ) -> bool {
+        let skill_lower = skill.to_lowercase();
+        if manual_profs.iter().any(|p| {
+            p.category == "skill"
+                && p.name.to_lowercase() == skill_lower
+                && p.proficiency_type == "expertise"
+        }) {
+            return true;
+        }
+        expertise_skills.iter().any(|s| s.to_lowercase().contains(&skill_lower))
+    }
+
+    pub fn get_skill_modifier(
+        &self,
+        skill: &str,
+        ability: &str,
+        manual_profs: &[CharacterProficiency],
+        chosen_skills: &[String],
+        expertise_skills: &[String],
+    ) -> (bool, bool, i32) {
+        let base_mod = self.ability_modifier(ability);
+        let is_prof = self.has_skill_proficiency(skill, manual_profs, chosen_skills);
+        let is_exp = self.has_skill_expertise(skill, manual_profs, expertise_skills);
+        let pb = self.proficiency_bonus();
+        let bonus = if is_exp { pb * 2 } else if is_prof { pb } else { 0 };
+        (is_prof, is_exp, base_mod + bonus)
+    }
+
+    pub fn get_saving_throw_modifier(
+        &self,
+        ability: &str,
+        manual_profs: &[CharacterProficiency],
+        class_saves: &[String],
+    ) -> (bool, bool, i32) {
+        let base_mod = self.ability_modifier(ability);
+        let manual = manual_profs.iter().find(|p| {
+            p.category == "saving_throw" && p.name.eq_ignore_ascii_case(ability)
+        });
+
+        let (is_prof, is_exp) = match manual {
+            Some(p) => (true, p.proficiency_type == "expertise"),
+            None => (
+                class_saves.iter().any(|s| s.eq_ignore_ascii_case(ability)),
+                false,
+            ),
+        };
+
+        let pb = self.proficiency_bonus();
+        let bonus = if is_exp { pb * 2 } else if is_prof { pb } else { 0 };
+        (is_prof, is_exp, base_mod + bonus)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -155,7 +155,7 @@ impl App {
         let primary_level = self
             .active_character
             .as_ref()
-            .map(|c| crate::utils::level_from_xp(c.experience_pts))
+            .map(|c| crate::models::rules::level_from_xp(c.experience_pts))
             .unwrap_or(1);
 
         if self.char_classes.is_empty() {
