@@ -432,15 +432,16 @@ impl App {
         // Scan inventory for weapons
         for inv in self.char_inventory.iter().filter(|i| i.is_equipped) {
             if let Some(item) = self.all_items.iter().find(|i| i.id == inv.item_id) {
-                let itype = item.item_type.as_deref().unwrap_or("");
-                if itype.contains('W') {
+                let itype_full = item.item_type.as_deref().unwrap_or("");
+                let itype = itype_full.split('|').next().unwrap_or("");
+                if itype == "M" || itype == "R" {
                     // 'M'elee Weapon, 'R'anged Weapon
                     let is_finesse = item
                         .properties
                         .as_ref()
                         .map(|p| p.iter().any(|s| s.to_lowercase() == "finesse"))
                         .unwrap_or(false);
-                    let is_ranged = itype.contains('R');
+                    let is_ranged = itype == "R";
 
                     let ability_mod = if is_ranged || (is_finesse && dex_mod > str_mod) {
                         dex_mod
@@ -473,17 +474,35 @@ impl App {
                     }
 
                     // Always check for mastery info from backend
+                    let mut mastery_details = Vec::new();
                     if let Some(masteries) = &item.mastery {
-                        if !masteries.is_empty() {
-                            desc.push_str("\nMastery:\n");
-                            for mastery in masteries {
-                                let code = crate::utils::weapon_properties::parse_property_code(mastery);
-                                let mastery_name = crate::utils::weapon_mastery::get_mastery_property(code);
-                                let mastery_desc = crate::utils::weapon_mastery::get_mastery_description(mastery_name);
-                                if mastery_name != "—" {
-                                    desc.push_str(&format!("{}: {}\n", mastery_name, mastery_desc));
+                        for mastery in masteries {
+                            let code = crate::utils::weapon_properties::parse_property_code(mastery);
+                            let mut name = crate::utils::weapon_mastery::get_mastery_property(code);
+                            let mut desc_text = crate::utils::weapon_mastery::get_mastery_description(name);
+                            if name == "—" {
+                                let desc_direct = crate::utils::weapon_mastery::get_mastery_description(code);
+                                if desc_direct != "No description available." {
+                                    name = code;
+                                    desc_text = desc_direct;
                                 }
                             }
+                            if name != "—" {
+                                mastery_details.push((name, desc_text));
+                            }
+                        }
+                    }
+                    if mastery_details.is_empty() {
+                        let name = crate::utils::weapon_mastery::get_mastery_property(&item.name);
+                        let desc_text = crate::utils::weapon_mastery::get_mastery_description(name);
+                        if name != "—" {
+                            mastery_details.push((name, desc_text));
+                        }
+                    }
+                    if !mastery_details.is_empty() {
+                        desc.push_str("\nMastery:\n");
+                        for (name, d) in mastery_details {
+                            desc.push_str(&format!("{}: {}\n", name, d));
                         }
                     }
 

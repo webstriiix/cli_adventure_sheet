@@ -52,9 +52,21 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 
     pub fn handle_actions_key(app: &mut App, key: KeyEvent) {
-            // If a detail modal is open, any key closes it
+            // If a detail modal is open, Up/Down scrolls, any other key closes it
             if app.actions_detail_modal.is_some() {
-                app.actions_detail_modal = None;
+                match key.code {
+                    KeyCode::Up => {
+                        if app.content_scroll > 0 {
+                            app.content_scroll -= 1;
+                        }
+                    }
+                    KeyCode::Down => {
+                        app.content_scroll += 1;
+                    }
+                    _ => {
+                        app.actions_detail_modal = None;
+                    }
+                }
                 return;
             }
 
@@ -211,6 +223,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
                 }
                 desc = crate::ui::sheet::features::strip_tags(&desc);
 
+                app.content_scroll = 0;
                 app.actions_detail_modal = Some((name, desc));
             }
         }

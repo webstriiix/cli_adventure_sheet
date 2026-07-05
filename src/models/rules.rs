@@ -125,7 +125,7 @@ pub fn spell_slots_max(caster_progression: &str, char_level: i32, slot_idx: usiz
 }
 
 pub fn ch_ability_score(ch: &Character, key: &str) -> i32 {
-    match key {
+    match key.to_lowercase().as_str() {
         "str" => ch.strength,
         "dex" => ch.dexterity,
         "con" => ch.constitution,

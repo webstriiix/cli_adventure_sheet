@@ -4,6 +4,22 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 
     pub fn handle_inventory_key(app: &mut App, key: KeyEvent) {
+        if app.inventory_item_detail_modal.is_some() {
+            match key.code {
+                KeyCode::Up => {
+                    if app.content_scroll > 0 {
+                        app.content_scroll -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    app.content_scroll += 1;
+                }
+                _ => {
+                    app.inventory_item_detail_modal = None;
+                }
+            }
+            return;
+        }
         match key.code {
             KeyCode::Esc | KeyCode::Left => app.sidebar_focused = true,
             KeyCode::Char('q') => app.should_quit = true,
@@ -57,6 +73,7 @@ use crossterm::event::{KeyCode, KeyEvent};
                     } else if let Some(item) = app.all_items.iter().find(|i| i.id == inv_item.item_id) {
                         let name = item.name.clone();
                         let desc = get_item_description(item);
+                        app.content_scroll = 0;
                         app.inventory_item_detail_modal = Some((name, desc));
                     }
                 }
@@ -100,18 +117,40 @@ use crossterm::event::{KeyCode, KeyEvent};
         }
 
         // Mastery with full descriptions
+        let mut mastery_details = Vec::new();
         if let Some(masteries) = &item.mastery {
-            if !masteries.is_empty() {
-                parts.push(String::new());
-                parts.push("Mastery:".to_string());
-                for mastery in masteries {
-                    let code = crate::utils::weapon_properties::parse_property_code(mastery);
-                    let name = crate::utils::weapon_mastery::get_mastery_property(code);
-                    let desc = crate::utils::weapon_mastery::get_mastery_description(name);
-                    if name != "—" {
-                        parts.push(format!("{}: {}", name, desc));
+            for mastery in masteries {
+                let code = crate::utils::weapon_properties::parse_property_code(mastery);
+                let mut name = crate::utils::weapon_mastery::get_mastery_property(code);
+                let mut desc = crate::utils::weapon_mastery::get_mastery_description(name);
+                if name == "—" {
+                    let desc_direct = crate::utils::weapon_mastery::get_mastery_description(code);
+                    if desc_direct != "No description available." {
+                        name = code;
+                        desc = desc_direct;
                     }
                 }
+                if name != "—" {
+                    mastery_details.push((name, desc));
+                }
+            }
+        }
+        if mastery_details.is_empty() {
+            let itype_full = item.item_type.as_deref().unwrap_or("");
+            let itype = itype_full.split('|').next().unwrap_or("");
+            if itype == "M" || itype == "R" {
+                let name = crate::utils::weapon_mastery::get_mastery_property(&item.name);
+                let desc = crate::utils::weapon_mastery::get_mastery_description(name);
+                if name != "—" {
+                    mastery_details.push((name, desc));
+                }
+            }
+        }
+        if !mastery_details.is_empty() {
+            parts.push(String::new());
+            parts.push("Mastery:".to_string());
+            for (name, desc) in mastery_details {
+                parts.push(format!("{}: {}", name, desc));
             }
         }
 

@@ -51,17 +51,17 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
     // Render action detail modal if open
     if let Some((ref name, ref description)) = app.actions_detail_modal {
-        render_action_detail_modal(name, description, frame, area);
+        render_action_detail_modal(name, description, app.content_scroll as u16, frame, area);
     }
 
     // Render spell detail modal if open
     if let Some((ref name, ref description)) = app.spell_detail_modal {
-        render_action_detail_modal(name, description, frame, area);
+        render_action_detail_modal(name, description, app.content_scroll as u16, frame, area);
     }
 
     // Render inventory item detail modal if open
     if let Some((ref name, ref description)) = app.inventory_item_detail_modal {
-        render_inventory_item_detail_modal(name, description, frame, area);
+        render_inventory_item_detail_modal(name, description, app.content_scroll as u16, frame, area);
     }
 }
 
@@ -804,22 +804,44 @@ fn render_list_picker(app: &mut App, frame: &mut Frame, area: Rect, is_items: bo
             }
 
             // Mastery
+            let mut mastery_details = Vec::new();
             if let Some(masteries) = &item.mastery {
-                if !masteries.is_empty() {
-                    lines.push(Line::from(vec![Span::styled(
-                        "Mastery: ",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    )]));
-                    
-                    for mastery in masteries {
-                        let code = crate::utils::weapon_properties::parse_property_code(mastery);
-                        let name = crate::utils::weapon_mastery::get_mastery_property(code);
-                        let desc = crate::utils::weapon_mastery::get_mastery_description(name);
-                        
-                        lines.push(Line::from(format!("  {}. {}", name, desc)));
+                for mastery in masteries {
+                    let code = crate::utils::weapon_properties::parse_property_code(mastery);
+                    let mut name = crate::utils::weapon_mastery::get_mastery_property(code);
+                    let mut desc = crate::utils::weapon_mastery::get_mastery_description(name);
+                    if name == "—" {
+                        let desc_direct = crate::utils::weapon_mastery::get_mastery_description(code);
+                        if desc_direct != "No description available." {
+                            name = code;
+                            desc = desc_direct;
+                        }
                     }
-                    lines.push(Line::from(""));
+                    if name != "—" {
+                        mastery_details.push((name, desc));
+                    }
                 }
+            }
+            if mastery_details.is_empty() {
+                let itype_full = item.item_type.as_deref().unwrap_or("");
+                let itype = itype_full.split('|').next().unwrap_or("");
+                if itype == "M" || itype == "R" {
+                    let name = crate::utils::weapon_mastery::get_mastery_property(&item.name);
+                    let desc = crate::utils::weapon_mastery::get_mastery_description(name);
+                    if name != "—" {
+                        mastery_details.push((name, desc));
+                    }
+                }
+            }
+            if !mastery_details.is_empty() {
+                lines.push(Line::from(vec![Span::styled(
+                    "Mastery: ",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )]));
+                for (name, desc) in mastery_details {
+                    lines.push(Line::from(format!("  {}. {}", name, desc)));
+                }
+                lines.push(Line::from(""));
             }
 
             // Description entries
@@ -857,7 +879,7 @@ fn render_list_picker(app: &mut App, frame: &mut Frame, area: Rect, is_items: bo
     }
 }
 
-fn render_action_detail_modal(name: &str, description: &str, frame: &mut Frame, area: Rect) {
+fn render_action_detail_modal(name: &str, description: &str, scroll_offset: u16, frame: &mut Frame, area: Rect) {
     let popup_width = 90.min(area.width.saturating_sub(4));
     let popup_height = (area.height.saturating_sub(4)).max(15);
     let x = (area.width.saturating_sub(popup_width)) / 2;
@@ -901,15 +923,17 @@ fn render_action_detail_modal(name: &str, description: &str, frame: &mut Frame, 
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Press any key to close",
+        "Press any key to close  |  Up/Down to scroll",
         Style::default().fg(Color::DarkGray),
     )));
 
-    let content = Paragraph::new(lines).wrap(Wrap { trim: true });
+    let content = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .scroll((scroll_offset, 0));
     frame.render_widget(content, inner);
 }
 
-fn render_inventory_item_detail_modal(name: &str, description: &str, frame: &mut Frame, area: Rect) {
+fn render_inventory_item_detail_modal(name: &str, description: &str, scroll_offset: u16, frame: &mut Frame, area: Rect) {
     let popup_width = 90.min(area.width.saturating_sub(4));
     let popup_height = (area.height.saturating_sub(4)).max(15);
     let x = (area.width.saturating_sub(popup_width)) / 2;
@@ -953,10 +977,12 @@ fn render_inventory_item_detail_modal(name: &str, description: &str, frame: &mut
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Press Shift+K to close",
+        "Press any key to close  |  Up/Down to scroll",
         Style::default().fg(Color::DarkGray),
     )));
 
-    let content = Paragraph::new(lines).wrap(Wrap { trim: true });
+    let content = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .scroll((scroll_offset, 0));
     frame.render_widget(content, inner);
 }

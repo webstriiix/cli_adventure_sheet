@@ -4,9 +4,21 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 
     pub fn handle_spells_key(app: &mut App, key: KeyEvent) {
-        // If spell detail modal is open, any key closes it
+        // If spell detail modal is open, Up/Down scrolls, any other key closes it
         if app.spell_detail_modal.is_some() {
-            app.spell_detail_modal = None;
+            match key.code {
+                KeyCode::Up => {
+                    if app.content_scroll > 0 {
+                        app.content_scroll -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    app.content_scroll += 1;
+                }
+                _ => {
+                    app.spell_detail_modal = None;
+                }
+            }
             return;
         }
 
@@ -304,6 +316,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
             }
 
             let desc = parts.join("\n");
+            app.content_scroll = 0;
             app.spell_detail_modal = Some((name, desc));
         }
     }
