@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{List, ListItem, Paragraph},
 };
 
 use crate::app::App;
@@ -73,28 +73,6 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
         }
     }
 
-    // --- Render Modal Overlay if open ---
-    if let Some((modal_name, modal_desc)) = &app.actions_detail_modal {
-        let overlay_area = Rect::new(
-            chunks[1].x + 2,
-            chunks[1].y + 2,
-            chunks[1].width.saturating_sub(4),
-            chunks[1].height.saturating_sub(4),
-        );
-
-        frame.render_widget(Clear, overlay_area);
-
-        let block = Block::default()
-            .title(format!(" {} (Press any key to close) ", modal_name))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow));
-
-        let p = Paragraph::new(modal_desc.as_str())
-            .block(block)
-            .wrap(Wrap { trim: false });
-
-        frame.render_widget(p, overlay_area);
-    }
 }
 
 fn render_nav_bar(app: &App, frame: &mut Frame, area: Rect) {

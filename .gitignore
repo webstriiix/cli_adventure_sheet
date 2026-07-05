@@ -1,3 +1,4 @@
 /target
 API_DOCUMENTATION.md
 .env
+*.log

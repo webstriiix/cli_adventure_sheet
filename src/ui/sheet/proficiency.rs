@@ -14,8 +14,8 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         None => return,
     };
 
-    let level = crate::utils::level_from_xp(character.experience_pts);
-    let prof_bonus = crate::utils::proficiency_bonus(level);
+    let level = crate::models::rules::level_from_xp(character.experience_pts);
+    let prof_bonus = crate::models::rules::proficiency_bonus(level);
 
     // Find the class data for this character
     let class = app.classes.iter().find(|c| c.name == app.char_class_name);
@@ -47,7 +47,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     let bonus_text = Paragraph::new(Line::from(vec![
         Span::styled("  ", Style::default()),
         Span::styled(
-            crate::utils::format_modifier(prof_bonus),
+            crate::models::rules::format_modifier(prof_bonus),
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),

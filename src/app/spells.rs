@@ -47,6 +47,7 @@ impl App {
                 if let Some(pos) = self.char_spells.iter().position(|s| s.spell_id == spell_id) {
                     self.char_spells.remove(pos);
                 }
+                self.spell_sources.remove(&spell_id);
 
                 // Adjust selection index if needed
                 let new_filtered_len = self.char_spells_filtered().len();
@@ -121,6 +122,7 @@ impl App {
         match rt.block_on(self.client.add_spell(character_id, &req)) {
             Ok(char_spell) => {
                 self.char_spells.push(char_spell);
+                self.spell_sources.insert(spell_id, "Spellbook".to_string());
                 self.status_msg = "Spell added!".to_string();
                 self.picker_mode = PickerMode::None;
             }
@@ -137,7 +139,6 @@ impl App {
         self.all_spells
             .iter()
             .filter(|s| {
-                // Exclude if already always prepared by a feature
                 if always_prepared.contains(&s.id) {
                     return false;
                 }

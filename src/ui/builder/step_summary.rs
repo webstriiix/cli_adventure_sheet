@@ -1,6 +1,6 @@
 use crate::app::App;
 use crate::models::app_state::{BuilderState, Screen, CharacterCreationStep};
-use crate::utils::ABILITY_NAMES;
+use crate::models::rules::ABILITY_NAMES;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
@@ -229,7 +229,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
             app.status_msg.clear();
         }
         KeyCode::Enter => {
-            crate::handlers::builder::submit_character_from_builder(app);
+            crate::app::events::builder::submit_character_from_builder(app);
         }
         _ => {}
     }

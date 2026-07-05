@@ -62,7 +62,8 @@ impl App {
                 .update_inventory_item(character_id, inventory_id, &req),
         ) {
             Ok(updated) => {
-                self.char_inventory[self.selected_list_index] = updated;
+                let idx = self.selected_list_index;
+                self.char_inventory[idx] = updated;
                 self.status_msg = if new_equipped {
                     "Item equipped".to_string()
                 } else {
@@ -100,7 +101,8 @@ impl App {
                 .update_inventory_item(character_id, inventory_id, &req),
         ) {
             Ok(updated) => {
-                self.char_inventory[self.selected_list_index] = updated;
+                let idx = self.selected_list_index;
+                self.char_inventory[idx] = updated;
                 self.status_msg = if new_attuned {
                     "Item attuned".to_string()
                 } else {
@@ -141,7 +143,8 @@ impl App {
                 .update_inventory_item(character_id, inventory_id, &req),
         ) {
             Ok(updated) => {
-                self.char_inventory[self.selected_list_index] = updated;
+                let idx = self.selected_list_index;
+                self.char_inventory[idx] = updated;
                 self.status_msg = format!("Quantity: {new_qty}");
             }
             Err(e) => {
@@ -176,7 +179,6 @@ impl App {
                 self.char_inventory.push(inv_item);
                 self.status_msg = "Item added!".to_string();
                 self.picker_mode = PickerMode::None;
-                self.show_item_detail = false;
             }
             Err(e) => {
                 self.status_msg = format!("Failed to add item: {e}");

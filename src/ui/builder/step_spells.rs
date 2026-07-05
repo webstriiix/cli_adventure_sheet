@@ -76,7 +76,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     };
 
     let score = app.builder.abilities[ability_idx];
-    let modifier = crate::utils::ability_modifier(score);
+    let modifier = crate::models::rules::ability_modifier(score);
 
     let spell_save_dc = 8 + prof_bonus + modifier;
     let spell_attack = prof_bonus + modifier;
@@ -107,7 +107,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     
     // Show Prepared Limit for Paladins/Clerics/Druids/Wizards
     let class_name = app.builder.class_id.and_then(|id| app.classes.iter().find(|c| c.id == id).map(|c| c.name.clone())).unwrap_or_default();
-    let max_prepared = crate::utils::max_prepared_spells(&class_name, 1, modifier);
+    let max_prepared = crate::models::rules::max_prepared_spells(&class_name, 1, modifier);
     
     info_lines.push(Line::from(""));
     info_lines.push(Line::from(vec![

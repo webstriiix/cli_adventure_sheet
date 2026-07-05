@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::App;
 use crate::models::app_state::{EditSection, Screen, SheetTab};
-use crate::models::character::Character;
+use crate::models::character::{Character, CharacterClass, CharacterClassResponse};
 use crate::utils::storage::FullCharacterCache;
 
 impl App {
@@ -15,7 +15,7 @@ impl App {
 
         self.edit_buffers[0] = character.name.clone();
         self.edit_buffers[1] = character.experience_pts.to_string();
-        self.edit_buffers[2] = crate::utils::level_from_xp(character.experience_pts).to_string();
+        self.edit_buffers[2] = crate::models::rules::level_from_xp(character.experience_pts).to_string();
         self.edit_buffers[3] = character.max_hp.to_string();
         self.edit_buffers[4] = character.current_hp.to_string();
         self.edit_buffers[5] = character.temp_hp.to_string();
@@ -37,17 +37,8 @@ impl App {
             .position(|r| Some(r.id) == character.race_id)
             .unwrap_or(0);
         self.edit_race_state = ListState::default();
-        self.edit_race_state.select(Some(self.edit_race_index));
-
-        let current_class_id = self.active_class_id;
-
-        self.edit_class_index = self
-            .classes
-            .iter()
-            .position(|c| c.id == current_class_id)
-            .unwrap_or(0);
-        self.edit_class_state = ListState::default();
-        self.edit_class_state.select(Some(self.edit_class_index));
+        let idx = self.edit_race_index;
+        self.edit_race_state.select(Some(idx));
 
         self.edit_bg_index = if let Some(bg_id) = character.background_id {
             self.backgrounds
@@ -58,7 +49,67 @@ impl App {
             0
         };
         self.edit_bg_state = ListState::default();
-        self.edit_bg_state.select(Some(self.edit_bg_index));
+        let idx = self.edit_bg_index;
+        self.edit_bg_state.select(Some(idx));
+
+        // Authoritative fetch of classes for this character to ensure subclass info is accurate
+        let rt = self.rt.clone();
+        if let Ok(classes) = rt.block_on(self.client.get_character_classes(character.id)) {
+            self.char_classes = classes
+                .iter()
+                .map(|ccr| CharacterClass {
+                    id: 0,
+                    character_id: character.id,
+                    class_id: ccr.class_id,
+                    level: ccr.level,
+                    is_primary: ccr.is_primary,
+                    subclass_id: ccr.subclass_id,
+                })
+                .collect();
+
+            // Sync active_class_id and try to pre-load class detail if there's a subclass
+            if let Some(primary) = classes.iter().find(|cc| cc.is_primary) {
+                self.active_class_id = primary.class_id;
+                let (name, source) = self
+                    .classes
+                    .iter()
+                    .find(|cl| cl.id == primary.class_id)
+                    .map(|cl| (cl.name.clone(), cl.source_slug.clone()))
+                    .unwrap_or_else(|| ("".to_string(), "".to_string()));
+
+                if !name.is_empty() {
+                    if let Ok(detail) = rt.block_on(self.client.get_class_detail(&name, &source)) {
+                        self.class_detail = Some(detail);
+                    }
+                }
+            }
+        }
+
+        // Initialize class picker index
+        let current_class_id = self.active_class_id;
+        self.edit_class_index = self
+            .classes
+            .iter()
+            .position(|c| c.id == current_class_id)
+            .unwrap_or(0);
+        self.edit_class_state = ListState::default();
+        let idx = self.edit_class_index;
+        self.edit_class_state.select(Some(idx));
+
+        // Initialize subclass picker index from fetched data
+        let current_subclass_id = self.char_classes.first().and_then(|cc| cc.subclass_id);
+        self.edit_subclass_index = self
+            .class_detail
+            .as_ref()
+            .and_then(|d| {
+                d.subclasses
+                    .iter()
+                    .position(|swf| Some(swf.subclass.id) == current_subclass_id)
+            })
+            .unwrap_or(0);
+        self.edit_subclass_state = ListState::default();
+        let idx = self.edit_subclass_index;
+        self.edit_subclass_state.select(Some(idx));
 
         self.multiclass_selected = 0;
         self.multiclass_section = crate::models::app_state::MulticlassSection::List;
@@ -82,7 +133,10 @@ impl App {
                     .map(|cl| (cl.name.clone(), cl.source_slug.clone()))
                     .unwrap_or_else(|| ("Unknown".into(), "PHB".into()));
 
-                let level = crate::utils::level_from_xp(c.experience_pts);
+                // Fetch character classes from API (includes authoritative subclass data)
+                let char_classes_result = rt.block_on(self.client.get_character_classes(c.id));
+
+                let level = crate::models::rules::level_from_xp(c.experience_pts);
 
                 // Parallel fetch all related data
                 let (feats, spells, inventory, slots, hit_dice, detail, actions, resources, profs) =
@@ -100,6 +154,34 @@ impl App {
                         )
                     });
 
+                // Build char_classes from API response (authoritative)
+                let char_classes: Vec<CharacterClass> = char_classes_result
+                    .as_ref()
+                    .map(|ccs| ccs
+                    .iter()
+                    .map(|ccr| CharacterClass {
+                        id: 0,
+                        character_id: c.id,
+                        class_id: ccr.class_id,
+                        level: ccr.level,
+                        is_primary: ccr.is_primary,
+                        subclass_id: ccr.subclass_id,
+                    })
+                    .collect())
+                    .unwrap_or_default();
+
+                // Extract subclass_name from API response (primary class)
+                let api_subclass_name: String = char_classes_result
+                    .as_ref()
+                    .ok()
+                    .and_then(|ccs: &Vec<CharacterClassResponse>| ccs.iter().find(|cc| cc.is_primary))
+                    .and_then(|cc| cc.subclass_name.clone())
+                    .unwrap_or_default();
+
+                // Preserve existing cache's spell_sources, use API data for subclass
+                let filename = format!("char_{}.json", character_id);
+                let existing_cache = self.storage.load_cache::<FullCharacterCache>(&filename);
+
                 let cache = FullCharacterCache {
                     character: c.clone(),
                     feats: feats.unwrap_or_default(),
@@ -111,10 +193,26 @@ impl App {
                     class_detail: detail.ok(),
                     actions: actions.ok(),
                     resources: resources.ok(),
+                    spell_sources: existing_cache
+                        .as_ref()
+                        .map(|ec| ec.spell_sources.clone())
+                        .unwrap_or_default(),
+                    subclass_name: api_subclass_name,
+                    char_classes: if !char_classes.is_empty() {
+                        char_classes
+                    } else {
+                        vec![CharacterClass {
+                            id: 0,
+                            character_id: c.id,
+                            class_id: c.class_id.unwrap_or(0),
+                            level: level,
+                            is_primary: true,
+                            subclass_id: None,
+                        }]
+                    },
                 };
 
                 // Save to local cache for offline use
-                let filename = format!("char_{}.json", character_id);
                 self.storage.save_cache(&filename, &cache);
 
                 self.apply_character_data(cache);
@@ -149,6 +247,23 @@ impl App {
         self.char_actions = cache.actions;
         self.char_resources = cache.resources;
         self.class_detail = cache.class_detail;
+
+        // Character level needed early for class initialization
+        let char_level = crate::models::rules::level_from_xp(c.experience_pts);
+
+        // UI State — restore char_classes from cache if available
+        self.char_classes = if !cache.char_classes.is_empty() {
+            cache.char_classes
+        } else {
+            vec![crate::models::character::CharacterClass {
+                id: 0,
+                character_id: c.id,
+                class_id: c.class_id.unwrap_or(0),
+                level: char_level,
+                is_primary: true,
+                subclass_id: None,
+            }]
+        };
 
         // Names
         self.char_race_name = self
@@ -226,39 +341,19 @@ impl App {
             .filter(|s| !s.is_empty())
             .collect();
 
-        // Subclass
-        self.char_subclass_name = if let Some(detail) = &self.class_detail {
-            let feat_names: Vec<String> = self
-                .char_feats
-                .iter()
-                .filter(|cf| cf.source_type.to_lowercase().contains("subclass"))
-                .filter_map(|cf| {
-                    self.all_feats
-                        .iter()
-                        .find(|f| f.id == cf.feat_id)
-                        .map(|f| f.name.clone())
-                })
-                .collect();
-
-            detail
-                .subclasses
-                .iter()
-                .find(|swf| {
-                    swf.features.iter().any(|sf| {
-                        feat_names.iter().any(|fn_| {
-                            fn_.to_lowercase().contains(&sf.name.to_lowercase())
-                                || sf.name.to_lowercase().contains(&fn_.to_lowercase())
-                        })
-                    })
-                })
+        // Subclass — get subclass_id from char_classes, then look up by ID
+        let subclass_id = self.char_classes.first().and_then(|cc| cc.subclass_id);
+        self.char_subclass_name = if let Some(sid) = subclass_id {
+            self.class_detail
+                .as_ref()
+                .and_then(|d| d.subclasses.iter().find(|swf| swf.subclass.id == sid))
                 .map(|swf| swf.subclass.name.clone())
                 .unwrap_or_default()
         } else {
-            String::new()
+            cache.subclass_name.clone()
         };
 
         // Features & Traits
-        let char_level = crate::utils::level_from_xp(c.experience_pts);
         self.char_class_features = self
             .class_detail
             .as_ref()
@@ -268,6 +363,23 @@ impl App {
                     .filter(|f| f.level <= char_level && !f.is_subclass_gate)
                     .cloned()
                     .collect()
+            })
+            .unwrap_or_default();
+
+        // Subclass features — match by subclass_id, not name
+        self.char_subclass_features = self
+            .class_detail
+            .as_ref()
+            .and_then(|d| {
+                subclass_id
+                    .and_then(|sid| d.subclasses.iter().find(|swf| swf.subclass.id == sid))
+                    .map(|swf| {
+                        swf.features
+                            .iter()
+                            .filter(|f| f.level <= char_level)
+                            .cloned()
+                            .collect()
+                    })
             })
             .unwrap_or_default();
 
@@ -305,6 +417,21 @@ impl App {
                 Vec::new()
             };
 
+        // Spell slots from API class definition
+        self.char_spell_slots = self
+            .class_detail
+            .as_ref()
+            .and_then(|d| d.class.spell_slots.as_ref())
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| row.iter().map(|&v| v as u8).collect())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Spell sources
+        self.spell_sources = cache.spell_sources.into_iter().collect();
+
         // Resources
         self.spell_slots_used = [0; 9];
         for slot in cache.spell_slots {
@@ -327,15 +454,8 @@ impl App {
         self.death_saves_success = c.death_saves_successes as u8;
         self.death_saves_fail = c.death_saves_failures as u8;
 
-        // UI State
-        self.char_classes = vec![crate::models::character::CharacterClass {
-            id: 0,
-            character_id: c.id,
-            class_id: c.class_id.unwrap_or(0),
-            level: char_level,
-            is_primary: true,
-            subclass_id: None,
-        }];
+        // Mark spells dirty so sync runs on next render
+        self.spells_dirty = true;
 
         // Merge derived actions into the stored char_actions
         let derived = self.derive_actions();
@@ -397,6 +517,62 @@ impl App {
         self.content_scroll = 0;
     }
 
+    /// Save the current in-memory char_subclass_name, spell_sources, and char_classes to the local cache.
+    pub fn persist_subclass_to_cache(&mut self) {
+        if let Some(character) = &self.active_character {
+            let filename = format!("char_{}.json", character.id);
+            if let Some(mut cache) = self.storage.load_cache::<FullCharacterCache>(&filename) {
+                cache.subclass_name = self.char_subclass_name.clone();
+                cache.spell_sources = self
+                    .spell_sources
+                    .iter()
+                    .map(|(id, src)| (*id, src.clone()))
+                    .collect();
+                cache.char_classes = self.char_classes.clone();
+                self.storage.save_cache(&filename, &cache);
+            }
+        }
+    }
+
+    /// Re-calculate char_subclass_features from current state (used after subclass selection).
+    pub fn refresh_subclass_features(&mut self) {
+        let subclass_id = self.char_classes.first().and_then(|cc| cc.subclass_id);
+
+        self.char_subclass_name = if let Some(sid) = subclass_id {
+            self.class_detail
+                .as_ref()
+                .and_then(|d| d.subclasses.iter().find(|swf| swf.subclass.id == sid))
+                .map(|swf| swf.subclass.name.clone())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        let char_level = self.active_character
+            .as_ref()
+            .map(|c| crate::models::rules::level_from_xp(c.experience_pts))
+            .unwrap_or(1);
+
+        self.char_subclass_features = self
+            .class_detail
+            .as_ref()
+            .and_then(|d| {
+                subclass_id
+                    .and_then(|sid| d.subclasses.iter().find(|swf| swf.subclass.id == sid))
+                    .map(|swf| {
+                        swf.features
+                            .iter()
+                            .filter(|f| f.level <= char_level)
+                            .cloned()
+                            .collect()
+                    })
+            })
+            .unwrap_or_default();
+
+        // Mark spells dirty since subclass changed (may affect always-prepared spells)
+        self.spells_dirty = true;
+    }
+
     pub fn save_notes(&mut self) {
         let (character_id, active_class_id, final_notes) = {
             let c = match &self.active_character {
@@ -433,7 +609,10 @@ impl App {
             active.notes = Some(final_notes.clone());
         }
 
-        let character_ref = self.active_character.as_ref().unwrap();
+        let Some(character_ref) = self.active_character.as_ref() else {
+            self.status_msg = "No active character to save notes".into();
+            return;
+        };
         let update = crate::models::character::UpdateCharacterRequest {
             notes: Some(final_notes),
             ..crate::models::character::UpdateCharacterRequest::from_character(

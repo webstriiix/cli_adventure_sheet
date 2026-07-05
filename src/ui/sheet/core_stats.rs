@@ -28,11 +28,11 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     ])
     .split(area);
 
-    let level = crate::utils::level_from_xp(character.experience_pts);
-    let prof_bonus = crate::utils::proficiency_bonus(level);
+    let level = crate::models::rules::level_from_xp(character.experience_pts);
+    let prof_bonus = crate::models::rules::proficiency_bonus(level);
 
-    let dex_mod = crate::utils::ability_modifier(character.dexterity);
-    let wis_mod = crate::utils::ability_modifier(character.wisdom);
+    let dex_mod = crate::models::rules::ability_modifier(character.dexterity);
+    let wis_mod = crate::models::rules::ability_modifier(character.wisdom);
 
     let ac = app.calc_ac(dex_mod);
 
@@ -86,7 +86,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
 
     for (i, (label, value)) in [
         ("  AC", format!("{ac}")),
-        ("  INIT", crate::utils::format_modifier(initiative)),
+        ("  INIT", crate::models::rules::format_modifier(initiative)),
         ("  SPEED", format!("{speed} ft")),
         ("  HIT DIE", hd_str),
     ]
@@ -235,7 +235,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         let lines: Vec<Line> = col_scores
             .iter()
             .map(|(name, score)| {
-                let m = crate::utils::ability_modifier(*score);
+                let m = crate::models::rules::ability_modifier(*score);
                 let sign = if m >= 0 { "+" } else { "" };
                 Line::from(vec![
                     Span::styled(
@@ -278,20 +278,12 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     let save_spans: Vec<Span> = scores
         .iter()
         .enumerate()
-        .flat_map(|(idx, (name, score))| {
-            let base_mod = crate::utils::ability_modifier(*score);
-            
-            // Manual proficiency check
-            let manual = app.char_proficiencies.iter()
-                .find(|p| p.category == "saving_throw" && p.name.eq_ignore_ascii_case(name));
-            
-            let (is_prof, is_exp) = match manual {
-                Some(p) => (true, p.proficiency_type == "expertise"),
-                None => (class_prof_saves.iter().any(|s| s.eq_ignore_ascii_case(name)), false),
-            };
-
-            let bonus = if is_exp { prof_bonus * 2 } else if is_prof { prof_bonus } else { 0 };
-            let total = base_mod + bonus;
+        .flat_map(|(idx, (name, _score))| {
+            let (is_prof, is_exp, total) = character.get_saving_throw_modifier(
+                name,
+                &app.char_proficiencies,
+                &class_prof_saves,
+            );
             
             let color = if is_exp {
                 Color::Yellow
@@ -310,7 +302,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
             }
 
             vec![Span::styled(
-                format!(" {marker}{name} {} ", crate::utils::format_modifier(total)),
+                format!(" {marker}{name} {} ", crate::models::rules::format_modifier(total)),
                 style,
             )]
         })
@@ -329,20 +321,33 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(senses_header, chunks[6]);
 
     // Passive Perception: 10 + WIS mod + prof bonus if proficient in Perception
-    let wis_manual = app.char_proficiencies.iter()
-        .find(|p| p.category == "saving_throw" && p.name.eq_ignore_ascii_case("WIS"));
+    let (perc_prof, _, perc_mod) = character.get_skill_modifier(
+        "perception",
+        "wis",
+        &app.char_proficiencies,
+        &app.char_chosen_skills,
+        &app.char_expertise_skills,
+    );
+    let (invest_prof, _, invest_mod) = character.get_skill_modifier(
+        "investigation",
+        "int",
+        &app.char_proficiencies,
+        &app.char_chosen_skills,
+        &app.char_expertise_skills,
+    );
     
-    let is_wis_prof = match wis_manual {
-        Some(_) => true,
-        None => class_prof_saves.iter().any(|s| s.eq_ignore_ascii_case("WIS")),
-    };
+    // Check observant feat
+    let has_observant = app.char_feats.iter().any(|cf| {
+        app.all_feats.iter()
+            .find(|f| f.id == cf.feat_id)
+            .map(|f| f.name.eq_ignore_ascii_case("observant"))
+            .unwrap_or(false)
+    });
+    let observant_bonus = if has_observant { 5 } else { 0 };
 
-    let perc_prof = is_wis_prof || app.has_perception_prof();
-    let invest_prof = app.has_skill_prof("investigation");
-    let int_mod = crate::utils::ability_modifier(character.intelligence);
-    let passive_perception = 10 + wis_mod + if perc_prof { prof_bonus } else { 0 };
-    let passive_insight = 10 + wis_mod;
-    let passive_investigation = 10 + int_mod + if invest_prof { prof_bonus } else { 0 };
+    let passive_perception = 10 + perc_mod + observant_bonus;
+    let passive_insight = 10 + wis_mod; // usually insight also gets bonus but logic was basic
+    let passive_investigation = 10 + invest_mod + observant_bonus;
 
     let senses_text = Paragraph::new(vec![
         Line::from(vec![

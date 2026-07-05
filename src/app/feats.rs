@@ -31,7 +31,8 @@ impl App {
         let compendium_feat_id = feat.feat_id; // Feat ID (Compendium)
 
         // Optimistically update UI
-        self.char_feats[self.selected_list_index] = feat.clone();
+        let idx = self.selected_list_index;
+        self.char_feats[idx] = feat.clone();
         self.status_msg = if change > 0 {
             "Feature used".to_string()
         } else {
@@ -86,33 +87,13 @@ impl App {
         let mut increases: std::collections::HashMap<String, i32> =
             std::collections::HashMap::new();
 
-        use crate::app::AsiMode;
-        match self.asi_mode {
-            AsiMode::PlusOneThree => {
-                *increases
-                    .entry(ability_keys[self.asi_ability_a].to_string())
-                    .or_insert(0) += 1;
-                *increases
-                    .entry(ability_keys[self.asi_ability_b].to_string())
-                    .or_insert(0) += 1;
-                *increases
-                    .entry(ability_keys[self.asi_ability_c].to_string())
-                    .or_insert(0) += 1;
-            }
-            AsiMode::PlusOneTwo => {
-                *increases
-                    .entry(ability_keys[self.asi_ability_a].to_string())
-                    .or_insert(0) += 2;
-                *increases
-                    .entry(ability_keys[self.asi_ability_b].to_string())
-                    .or_insert(0) += 1;
-            }
-            AsiMode::PlusTwo => {
-                *increases
-                    .entry(ability_keys[self.asi_ability_a].to_string())
-                    .or_insert(0) += 2;
-            }
-        }
+        // Only mode: +1/+1 to two abilities
+        *increases
+            .entry(ability_keys[self.asi_ability_a].to_string())
+            .or_insert(0) += 1;
+        *increases
+            .entry(ability_keys[self.asi_ability_b].to_string())
+            .or_insert(0) += 1;
 
         let req = AsiChoiceRequest {
             bump_str: increases.get("str").copied(),
@@ -122,29 +103,17 @@ impl App {
             bump_wis: increases.get("wis").copied(),
             bump_cha: increases.get("cha").copied(),
             feat_id: None,
-            source_type: None, // Will use 'asi' on the backend or we can be explicit
+            source_type: None,
         };
 
         let rt = self.rt.clone();
         match rt.block_on(self.client.post_asi_choice(character.id, &req)) {
             Ok(updated_char) => {
-                use crate::app::AsiMode;
-                let label = match self.asi_mode {
-                    AsiMode::PlusOneThree => format!(
-                        "+1 {}, +1 {} and +1 {}",
-                        crate::utils::ABILITY_NAMES[self.asi_ability_a],
-                        crate::utils::ABILITY_NAMES[self.asi_ability_b],
-                        crate::utils::ABILITY_NAMES[self.asi_ability_c],
-                    ),
-                    AsiMode::PlusOneTwo => format!(
-                        "+2 {} and +1 {}",
-                        crate::utils::ABILITY_NAMES[self.asi_ability_a],
-                        crate::utils::ABILITY_NAMES[self.asi_ability_b]
-                    ),
-                    AsiMode::PlusTwo => {
-                        format!("+2 {}", crate::utils::ABILITY_NAMES[self.asi_ability_a])
-                    }
-                };
+                let label = format!(
+                    "+1 {} and +1 {}",
+                    crate::models::rules::ABILITY_NAMES[self.asi_ability_a],
+                    crate::models::rules::ABILITY_NAMES[self.asi_ability_b],
+                );
                 self.active_character = Some(updated_char);
                 self.status_msg = format!("ASI applied: {}", label);
                 self.picker_mode = PickerMode::None;
@@ -207,12 +176,6 @@ impl App {
         }
     }
 
-    /// True if `level` is an ASI/Feat milestone for this character's class.
-    pub fn is_asi_level(&self, level: i32) -> bool {
-        let class_name = &self.char_class_name;
-        Self::asi_levels_for_class(class_name).contains(&level)
-    }
-
     /// Filter feats by search string and optionally by character prerequisites.
     pub fn filtered_feats(
         &self,
@@ -224,7 +187,6 @@ impl App {
             .iter()
             .filter(|f| search.is_empty() || f.name.to_lowercase().contains(&search))
             .filter(|f| {
-                // If no character context, show all
                 let Some(ref ch) = character else {
                     return true;
                 };
@@ -253,7 +215,7 @@ impl App {
                 for ab in ability_arr {
                     for key in ["str", "dex", "con", "int", "wis", "cha"] {
                         if let Some(req_val) = ab.get(key).and_then(|v| v.as_i64()) {
-                            if crate::utils::ch_ability_score(ch, key) < req_val as i32 {
+                            if crate::models::rules::ch_ability_score(ch, key) < req_val as i32 {
                                 return false;
                             }
                         }
@@ -263,7 +225,7 @@ impl App {
 
             // Level prerequisite: {"level": 4}
             if let Some(req_level) = prereq.get("level").and_then(|v| v.as_i64()) {
-                let char_level = crate::utils::level_from_xp(ch.experience_pts);
+                let char_level = crate::models::rules::level_from_xp(ch.experience_pts);
                 if char_level < req_level as i32 {
                     return false;
                 }

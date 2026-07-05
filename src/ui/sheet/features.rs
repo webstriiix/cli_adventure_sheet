@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{List, ListItem, Paragraph},
+    widgets::Paragraph,
 };
 
 use crate::app::{App, FeaturesSubTab};
@@ -76,11 +76,11 @@ fn render_all(app: &mut App, frame: &mut Frame, area: Rect) {
         return;
     }
 
-    let mut items: Vec<ListItem> = Vec::new();
+    let mut total_lines: Vec<Line> = Vec::new();
 
     // Subclass banner
     if !app.char_subclass_name.is_empty() {
-        let line = Line::from(vec![
+        total_lines.push(Line::from(vec![
             Span::styled("  Subclass: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 app.char_subclass_name.clone(),
@@ -88,78 +88,95 @@ fn render_all(app: &mut App, frame: &mut Frame, area: Rect) {
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             ),
-        ]);
-        items.push(ListItem::new(line));
-        items.push(ListItem::new(Line::from("")));
+        ]));
+        total_lines.push(Line::from(""));
     }
 
-    // === CLASS FEATURES (names only) ===
-    if has_features {
-        items.push(ListItem::new(Line::from(Span::styled(
-            format!("  ── {} Class Features ──", app.char_class_name),
+    // === CLASS FEATURES (names only, merged with subclass) ===
+    if has_features || !app.char_subclass_features.is_empty() {
+        total_lines.push(Line::from(Span::styled(
+            format!("  ── {} Features ──", app.char_class_name),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
-        ))));
+        )));
+
+        // Collect and sort all features by level
+        let mut all_feat_items: Vec<(String, i32, bool)> = Vec::new();
         for f in &app.char_class_features {
-            items.push(ListItem::new(Line::from(vec![
+            all_feat_items.push((f.name.clone(), f.level, false));
+        }
+        for f in &app.char_subclass_features {
+            let display_name = if !app.char_subclass_name.is_empty() {
+                format!("{} - {}", f.name, app.char_subclass_name)
+            } else {
+                f.name.clone()
+            };
+            all_feat_items.push((display_name, f.level, true));
+        }
+        all_feat_items.sort_by_key(|(_, level, _)| *level);
+
+        for (name, level, _) in &all_feat_items {
+            total_lines.push(Line::from(vec![
                 Span::raw("    • "),
                 Span::styled(
-                    format!("{} (Lv {})", f.name, f.level),
+                    format!("{} (Lv {})", name, level),
                     Style::default().fg(Color::White),
                 ),
-            ])));
+            ]));
         }
-        items.push(ListItem::new(Line::from("")));
+        total_lines.push(Line::from(""));
     }
 
     // === SPECIES TRAITS (names only) ===
     if has_traits {
-        items.push(ListItem::new(Line::from(Span::styled(
+        total_lines.push(Line::from(Span::styled(
             format!("  ── {} Species Traits ──", app.char_race_name),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
-        ))));
+        )));
         for (name, _) in &app.char_race_traits {
-            items.push(ListItem::new(Line::from(vec![
+            total_lines.push(Line::from(vec![
                 Span::raw("    • "),
                 Span::styled(name.clone(), Style::default().fg(Color::White)),
-            ])));
+            ]));
         }
-        items.push(ListItem::new(Line::from("")));
+        total_lines.push(Line::from(""));
     }
 
     // === FEATS ===
     if has_feats {
-        items.push(ListItem::new(Line::from(Span::styled(
+        total_lines.push(Line::from(Span::styled(
             "  ── Feats ──",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
-        ))));
+        )));
         for feat in &app.char_feats {
             let name = app.feat_name(feat.feat_id);
             let level = feat
                 .gained_at_level
                 .map(|l| format!(" (Lv {})", l))
                 .unwrap_or_default();
-            items.push(ListItem::new(Line::from(vec![
+            total_lines.push(Line::from(vec![
                 Span::raw("    • "),
                 Span::styled(
                     format!("{}{}", name, level),
                     Style::default().fg(Color::White),
                 ),
-            ])));
+            ]));
         }
     }
 
-    let list = List::new(items);
-    frame.render_widget(list, area);
+    let p = Paragraph::new(total_lines)
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .scroll((app.content_scroll as u16, 0));
+    frame.render_widget(p, area);
 }
 
 fn render_class_features(app: &mut App, frame: &mut Frame, area: Rect) {
-    if app.char_class_features.is_empty() {
+    if app.char_class_features.is_empty() && app.char_subclass_features.is_empty() {
         let msg = "  No class features found.\n  Make sure the class data has been imported.";
         frame.render_widget(
             Paragraph::new(msg).style(Style::default().fg(Color::DarkGray)),
@@ -179,23 +196,58 @@ fn render_class_features(app: &mut App, frame: &mut Frame, area: Rect) {
     )));
     total_lines.push(Line::from(""));
 
+    // Collect all features with their source info
+    let mut all_features: Vec<(String, i32, Option<Feature>, bool)> = Vec::new();
+
     for f in &app.char_class_features {
         let feature = f.interpret();
-        let badge = feature_badge(&feature);
-        let entries_text = extract_class_feature_text(&f.entries);
+        all_features.push((f.name.clone(), f.level, Some(feature), false));
+    }
+
+    for f in &app.char_subclass_features {
+        let display_name = if !app.char_subclass_name.is_empty() {
+            format!("{} - {}", f.name, app.char_subclass_name)
+        } else {
+            f.name.clone()
+        };
+        all_features.push((display_name, f.level, None, false));
+    }
+
+    // Sort by level
+    all_features.sort_by_key(|(_, level, _, _)| *level);
+
+    for (name, level, feature_opt, _) in &all_features {
+        let entries_text = if feature_opt.is_some() {
+            // Class feature - extract from entries
+            if let Some(cf) = app.char_class_features.iter().find(|cf| cf.name == *name) {
+                extract_class_feature_text(&cf.entries)
+            } else {
+                String::new()
+            }
+        } else {
+            // Subclass feature - extract from entries
+            let base_name = name.split(" - ").next().unwrap_or(name);
+            if let Some(sf) = app.char_subclass_features.iter().find(|sf| sf.name == base_name) {
+                extract_class_feature_text(&sf.entries)
+            } else {
+                String::new()
+            }
+        };
 
         let mut header_spans = vec![Span::styled(
-            format!("* {} • Lv {}", f.name, f.level),
+            format!("* {} • Lv {}", name, level),
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )];
-        if let Some((label, color)) = badge {
-            header_spans.push(Span::raw(" "));
-            header_spans.push(Span::styled(
-                label,
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ));
+        if let Some(feature) = feature_opt {
+            if let Some((label, color)) = feature_badge(feature) {
+                header_spans.push(Span::raw(" "));
+                header_spans.push(Span::styled(
+                    label,
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ));
+            }
         }
         let mut lines = vec![Line::from(header_spans)];
 

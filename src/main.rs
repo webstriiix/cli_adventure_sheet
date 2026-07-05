@@ -2,6 +2,7 @@ mod app;
 mod client;
 mod models;
 mod ui;
+mod utils;
 
 use std::io;
 
@@ -60,5 +61,3 @@ fn run_loop(
     }
     Ok(())
 }
-pub mod utils;
-pub mod handlers;

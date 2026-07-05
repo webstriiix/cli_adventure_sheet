@@ -41,7 +41,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             .characters
             .iter()
             .map(|ch| {
-                let level = crate::utils::level_from_xp(ch.experience_pts);
+                let level = crate::models::rules::level_from_xp(ch.experience_pts);
                 let hp_color = if ch.current_hp <= ch.max_hp / 4 {
                     Color::Red
                 } else if ch.current_hp <= ch.max_hp / 2 {
@@ -50,17 +50,37 @@ pub fn render(app: &mut App, frame: &mut Frame) {
                     Color::Green
                 };
 
-                let line = Line::from(vec![
-                    Span::styled(ch.name.clone(), Style::default().fg(Color::White)),
-                    Span::styled(
-                        format!("  Lvl {level}"),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    Span::styled(
-                        format!("  HP {}/{}", ch.current_hp, ch.max_hp),
-                        Style::default().fg(hp_color),
-                    ),
-                ]);
+                let is_draft = ch.name.starts_with("[DRAFT]");
+                let display_name = if is_draft {
+                    let name_stripped = ch.name.trim_start_matches("[DRAFT]").trim();
+                    if name_stripped.is_empty() {
+                        "Untitled".to_string()
+                    } else {
+                        name_stripped.to_string()
+                    }
+                } else {
+                    ch.name.clone()
+                };
+
+                let mut spans = vec![
+                    Span::styled(display_name, Style::default().fg(Color::White)),
+                ];
+                if is_draft {
+                    spans.push(Span::styled(
+                        " [Draft]",
+                        Style::default().fg(Color::LightYellow).add_modifier(Modifier::BOLD),
+                    ));
+                }
+                spans.push(Span::styled(
+                    format!("  Lvl {level}"),
+                    Style::default().fg(Color::DarkGray),
+                ));
+                spans.push(Span::styled(
+                    format!("  HP {}/{}", ch.current_hp, ch.max_hp),
+                    Style::default().fg(hp_color),
+                ));
+
+                let line = Line::from(spans);
 
                 ListItem::new(line)
             })
@@ -78,7 +98,8 @@ pub fn render(app: &mut App, frame: &mut Frame) {
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol("> ");
-        app.char_list_state.select(Some(app.selected_char));
+        let idx = app.selected_char;
+        app.char_list_state.select(Some(idx));
         frame.render_stateful_widget(list, chunks[1], &mut app.char_list_state);
     }
 
@@ -86,7 +107,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         Span::styled("↑↓", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(" navigate  "),
         Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" view  "),
+        Span::raw(" view/resume  "),
         Span::styled("E", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(" edit  "),
         Span::styled("D", Style::default().add_modifier(Modifier::BOLD)),

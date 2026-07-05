@@ -20,10 +20,11 @@ use crate::app::App;
 use crate::models::app_state::{PickerMode, SheetTab};
 
 pub fn render(app: &mut App, frame: &mut Frame) {
-    // Ensure "always prepared" spells from features (like Divine Smite) are in the list
-    app.sync_always_prepared_spells();
-    // Ensure scaling resources like Lay on Hands and Channel Divinity are updated
-    app.sync_resource_limits();
+    // Only sync spells when dirty (e.g. after character load, subclass change, level up)
+    if app.spells_dirty {
+        app.sync_always_prepared_spells();
+        app.spells_dirty = false;
+    }
 
     let area = frame.area();
 
@@ -50,12 +51,17 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
     // Render action detail modal if open
     if let Some((ref name, ref description)) = app.actions_detail_modal {
-        render_action_detail_modal(name, description, frame, area);
+        render_action_detail_modal(name, description, app.content_scroll as u16, frame, area);
     }
 
     // Render spell detail modal if open
     if let Some((ref name, ref description)) = app.spell_detail_modal {
-        render_action_detail_modal(name, description, frame, area);
+        render_action_detail_modal(name, description, app.content_scroll as u16, frame, area);
+    }
+
+    // Render inventory item detail modal if open
+    if let Some((ref name, ref description)) = app.inventory_item_detail_modal {
+        render_inventory_item_detail_modal(name, description, app.content_scroll as u16, frame, area);
     }
 }
 
@@ -65,7 +71,7 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
         None => return,
     };
 
-    let level = crate::utils::level_from_xp(character.experience_pts);
+    let level = crate::models::rules::level_from_xp(character.experience_pts);
     let hp_color = if character.current_hp <= character.max_hp / 4 {
         Color::Red
     } else if character.current_hp <= character.max_hp / 2 {
@@ -353,7 +359,7 @@ fn render_help_bar(app: &App, frame: &mut Frame, area: Rect) {
 
 fn render_picker_overlay(app: &mut App, frame: &mut Frame, area: Rect) {
     // Widen popup when item detail panel is open
-    let detail_open = app.picker_mode == PickerMode::ItemPicker && app.show_item_detail;
+    let detail_open = app.picker_mode == PickerMode::ItemPicker;
     let popup_width = if detail_open {
         (area.width.saturating_sub(4)).min(area.width)
     } else {
@@ -497,13 +503,14 @@ fn render_feat_picker(app: &mut App, frame: &mut Frame, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol(" > ");
-        app.picker_list_state.select(Some(app.picker_selected));
+        let idx = app.picker_selected;
+        app.picker_list_state.select(Some(idx));
         frame.render_stateful_widget(list, chunks[3], &mut app.picker_list_state);
     }
 }
 
 fn render_asi_choice(app: &App, frame: &mut Frame, area: Rect) {
-    use crate::utils::ABILITY_NAMES;
+    use crate::models::rules::ABILITY_NAMES;
 
     let mut lines: Vec<Line> = vec![
         Line::from(Span::styled(
@@ -520,29 +527,10 @@ fn render_asi_choice(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(""),
     ];
 
-    use crate::app::AsiMode;
-    match app.asi_mode {
-        AsiMode::PlusOneThree => {
-            lines.push(Line::from(format!(
-                "  +1 to: {} (Tab)    +1 to: {} (Shift+Tab)    +1 to: {} (Ctrl+Tab)",
-                ABILITY_NAMES[app.asi_ability_a],
-                ABILITY_NAMES[app.asi_ability_b],
-                ABILITY_NAMES[app.asi_ability_c]
-            )));
-        }
-        AsiMode::PlusOneTwo => {
-            lines.push(Line::from(format!(
-                "  +2 to: {} (Tab to change A)    +1 to: {} (Shift+Tab to change B)",
-                ABILITY_NAMES[app.asi_ability_a], ABILITY_NAMES[app.asi_ability_b]
-            )));
-        }
-        AsiMode::PlusTwo => {
-            lines.push(Line::from(format!(
-                "  +2 to: {} (Tab to change A)",
-                ABILITY_NAMES[app.asi_ability_a]
-            )));
-        }
-    }
+    lines.push(Line::from(format!(
+        "  +1 to: {} (Tab)    +1 to: {}",
+        ABILITY_NAMES[app.asi_ability_a], ABILITY_NAMES[app.asi_ability_b]
+    )));
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -555,7 +543,7 @@ fn render_asi_choice(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 fn render_condition_picker(app: &App, frame: &mut Frame, area: Rect) {
-    use crate::handlers::sheet::ALL_CONDITIONS;
+    use crate::app::events::sheet::ALL_CONDITIONS;
     use ratatui::widgets::{List, ListItem, ListState};
 
     let items: Vec<ListItem> = ALL_CONDITIONS
@@ -660,7 +648,7 @@ fn render_subclass_picker(app: &mut App, frame: &mut Frame, area: Rect) {
 }
 
 fn render_list_picker(app: &mut App, frame: &mut Frame, area: Rect, is_items: bool) {
-    let detail_open = is_items && app.show_item_detail;
+    let detail_open = is_items && app.picker_mode == PickerMode::ItemPicker;
 
     // Split horizontally into list pane and (optional) detail pane
     let panes = if detail_open {
@@ -722,7 +710,8 @@ fn render_list_picker(app: &mut App, frame: &mut Frame, area: Rect, is_items: bo
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol(" > ");
-        app.picker_list_state.select(Some(app.picker_selected));
+        let idx = app.picker_selected;
+        app.picker_list_state.select(Some(idx));
         frame.render_stateful_widget(list, chunks[3], &mut app.picker_list_state);
     }
 
@@ -801,9 +790,58 @@ fn render_list_picker(app: &mut App, frame: &mut Frame, area: Rect, is_items: bo
                         "Properties: ",
                         Style::default().add_modifier(Modifier::BOLD),
                     )]));
-                    lines.push(Line::from(format!("  {}", props.join(", "))));
-                    lines.push(Line::from(""));
+                    
+                    // Display formatted property descriptions
+                    let prop_lines = crate::utils::weapon_properties::format_all_properties(props);
+                    for prop_line in prop_lines {
+                        if prop_line.is_empty() {
+                            lines.push(Line::from(""));
+                        } else {
+                            lines.push(Line::from(format!("  {}", prop_line)));
+                        }
+                    }
                 }
+            }
+
+            // Mastery
+            let mut mastery_details = Vec::new();
+            if let Some(masteries) = &item.mastery {
+                for mastery in masteries {
+                    let code = crate::utils::weapon_properties::parse_property_code(mastery);
+                    let mut name = crate::utils::weapon_mastery::get_mastery_property(code);
+                    let mut desc = crate::utils::weapon_mastery::get_mastery_description(name);
+                    if name == "—" {
+                        let desc_direct = crate::utils::weapon_mastery::get_mastery_description(code);
+                        if desc_direct != "No description available." {
+                            name = code;
+                            desc = desc_direct;
+                        }
+                    }
+                    if name != "—" {
+                        mastery_details.push((name, desc));
+                    }
+                }
+            }
+            if mastery_details.is_empty() {
+                let itype_full = item.item_type.as_deref().unwrap_or("");
+                let itype = itype_full.split('|').next().unwrap_or("");
+                if itype == "M" || itype == "R" {
+                    let name = crate::utils::weapon_mastery::get_mastery_property(&item.name);
+                    let desc = crate::utils::weapon_mastery::get_mastery_description(name);
+                    if name != "—" {
+                        mastery_details.push((name, desc));
+                    }
+                }
+            }
+            if !mastery_details.is_empty() {
+                lines.push(Line::from(vec![Span::styled(
+                    "Mastery: ",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )]));
+                for (name, desc) in mastery_details {
+                    lines.push(Line::from(format!("  {}. {}", name, desc)));
+                }
+                lines.push(Line::from(""));
             }
 
             // Description entries
@@ -841,9 +879,9 @@ fn render_list_picker(app: &mut App, frame: &mut Frame, area: Rect, is_items: bo
     }
 }
 
-fn render_action_detail_modal(name: &str, description: &str, frame: &mut Frame, area: Rect) {
-    let popup_width = 60.min(area.width.saturating_sub(4));
-    let popup_height = 20.min(area.height.saturating_sub(4));
+fn render_action_detail_modal(name: &str, description: &str, scroll_offset: u16, frame: &mut Frame, area: Rect) {
+    let popup_width = 90.min(area.width.saturating_sub(4));
+    let popup_height = (area.height.saturating_sub(4)).max(15);
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let y = (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -885,10 +923,66 @@ fn render_action_detail_modal(name: &str, description: &str, frame: &mut Frame, 
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Press any key to close",
+        "Press any key to close  |  Up/Down to scroll",
         Style::default().fg(Color::DarkGray),
     )));
 
-    let content = Paragraph::new(lines).wrap(Wrap { trim: true });
+    let content = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .scroll((scroll_offset, 0));
+    frame.render_widget(content, inner);
+}
+
+fn render_inventory_item_detail_modal(name: &str, description: &str, scroll_offset: u16, frame: &mut Frame, area: Rect) {
+    let popup_width = 90.min(area.width.saturating_sub(4));
+    let popup_height = (area.height.saturating_sub(4)).max(15);
+    let x = (area.width.saturating_sub(popup_width)) / 2;
+    let y = (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {} ", name))
+        .title_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    if description.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No description available.",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for paragraph in description.split('\n') {
+            if paragraph.is_empty() {
+                lines.push(Line::from(""));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    paragraph.to_string(),
+                    Style::default().fg(Color::White),
+                )));
+            }
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Press any key to close  |  Up/Down to scroll",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let content = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .scroll((scroll_offset, 0));
     frame.render_widget(content, inner);
 }

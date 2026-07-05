@@ -68,7 +68,8 @@ impl App {
         let rt = self.rt.clone();
         match rt.block_on(self.client.patch_character_class(character_id, cc.class_id, &req)) {
             Ok(updated_char) => {
-                self.char_classes[self.multiclass_selected].level = new_level;
+                let idx = self.multiclass_selected;
+            self.char_classes[idx].level = new_level;
                 self.active_character = Some(updated_char);
                 self.status_msg = format!("Multiclass level updated to {new_level}.");
             }
@@ -111,12 +112,41 @@ impl App {
         let class_id = self.active_class_id;
         let req = PatchCharacterClassRequest { level, subclass_id };
         let rt = self.rt.clone();
+
+        // Update local state immediately regardless of API success
+        if let Some(cc) = self.char_classes.first_mut() {
+            if let Some(sid) = subclass_id {
+                cc.subclass_id = Some(sid);
+            }
+            if let Some(lvl) = level {
+                cc.level = lvl;
+            }
+        }
+
         match rt.block_on(self.client.patch_character_class(character_id, class_id, &req)) {
             Ok(updated_char) => {
-                self.active_character = Some(updated_char);
+                self.active_character = Some(updated_char.clone());
                 self.status_msg = "Class updated.".to_string();
             }
-            Err(e) => self.status_msg = format!("Failed to update class: {e}"),
+            Err(e) => {
+                self.status_msg = format!("Failed to update class: {e}");
+            }
+        }
+
+        // Verify and update local state with what backend actually saved
+        let rt2 = self.rt.clone();
+        if let Ok(classes) = rt2.block_on(self.client.get_character_classes(character_id)) {
+            self.char_classes = classes
+                .iter()
+                .map(|ccr| CharacterClass {
+                    id: 0,
+                    character_id,
+                    class_id: ccr.class_id,
+                    level: ccr.level,
+                    is_primary: ccr.is_primary,
+                    subclass_id: ccr.subclass_id,
+                })
+                .collect();
         }
     }
 
@@ -125,7 +155,7 @@ impl App {
         let primary_level = self
             .active_character
             .as_ref()
-            .map(|c| crate::utils::level_from_xp(c.experience_pts))
+            .map(|c| crate::models::rules::level_from_xp(c.experience_pts))
             .unwrap_or(1);
 
         if self.char_classes.is_empty() {

@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
-use crate::models::character::{Character, CharacterFeat, CharacterSpell, InventoryItem, CharacterSpellSlot, CharacterHitDice, CharacterProficiency};
-use crate::models::compendium::{Background, Class, ClassDetailResponse, Feat, Item, Race, Spell, ClassResourceResponse};
+use crate::models::character::{Character, CharacterClass, CharacterFeat, CharacterSpell, InventoryItem, CharacterSpellSlot, CharacterHitDice, CharacterProficiency};
+use crate::models::compendium::{Background, Class, ClassDetailResponse, Feat, Item, Race, Spell, ClassResourceResponse, Subrace};
 use crate::models::actions::CharacterActionsResponse;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -24,6 +24,15 @@ pub struct FullCharacterCache {
     pub class_detail: Option<ClassDetailResponse>,
     pub actions: Option<CharacterActionsResponse>,
     pub resources: Option<ClassResourceResponse>,
+    /// Spell sources: (spell_id, source_name) pairs.
+    #[serde(default)]
+    pub spell_sources: Vec<(i32, String)>,
+    /// Resolved subclass name for always-prepared spell syncing.
+    #[serde(default)]
+    pub subclass_name: String,
+    /// Character classes with subclass IDs.
+    #[serde(default)]
+    pub char_classes: Vec<CharacterClass>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -34,6 +43,7 @@ pub struct CompendiumCache {
     pub spells: Vec<Spell>,
     pub items: Vec<Item>,
     pub feats: Vec<Feat>,
+    pub subraces: Vec<Subrace>,
 }
 
 pub struct StorageManager {

@@ -19,6 +19,11 @@ pub struct Class {
     pub starting_equipment: JsonValue,
     pub multiclass_requirements: Option<JsonValue>,
     pub class_table: Option<Vec<JsonValue>>,
+    /// 2D array of spell slots: spell_slots[character_level - 1][spell_level_index] = max slots.
+    #[serde(default)]
+    pub spell_slots: Option<Vec<Vec<i32>>>,
+    /// Always-prepared/known/innate spells granted by class features.
+    pub additional_spells: Option<JsonValue>,
     pub subclass_title: Option<String>,
     pub edition: Option<String>,
 }
@@ -45,6 +50,9 @@ pub struct Subclass {
     pub unlock_level: i32,
     pub fluff_text: Option<String>,
     pub fluff_image_url: Option<String>,
+    /// Always-prepared/known/innate spells granted by this subclass (oath/domain/circle spells).
+    #[serde(default)]
+    pub additional_spells: Option<JsonValue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,19 +173,6 @@ pub struct Race {
     pub grants_bonus_feat: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RaceOption {
-    pub id: i32,
-    pub race_id: i32,
-    pub subrace_id: Option<i32>,
-    pub source_id: i32,
-    pub option_type: String,
-    pub choices: Option<Vec<JsonValue>>,
-    pub min_choose: i32,
-    pub max_choose: i32,
-    pub note: Option<String>,
-}
-
 // ── Background ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -250,54 +245,6 @@ pub struct Item {
     pub mastery: Option<Vec<String>>,
     pub entries: Option<JsonValue>,
     pub is_magic: Option<bool>,
-}
-
-// ── Monster ──
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Monster {
-    pub id: i32,
-    pub name: String,
-    pub source_id: i32,
-    pub size: Vec<String>,
-    #[serde(rename = "type")]
-    pub monster_type: String,
-    pub alignment: Vec<String>,
-    pub ac: Vec<JsonValue>,
-    pub hp_average: i32,
-    pub hp_formula: String,
-    pub speed: JsonValue,
-    #[serde(rename = "str")]
-    pub strength: i32,
-    #[serde(rename = "dex")]
-    pub dexterity: i32,
-    #[serde(rename = "con")]
-    pub constitution: i32,
-    #[serde(rename = "int")]
-    pub intelligence: i32,
-    #[serde(rename = "wis")]
-    pub wisdom: i32,
-    #[serde(rename = "cha")]
-    pub charisma: i32,
-    pub skills: JsonValue,
-    pub senses: Vec<String>,
-    pub passive: i32,
-    pub cr: String,
-    pub traits: Vec<JsonValue>,
-    pub actions: Vec<JsonValue>,
-    pub reactions: Option<JsonValue>,
-}
-
-// ── Optional Feature ──
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OptionalFeature {
-    pub id: i32,
-    pub name: String,
-    pub source_id: i32,
-    pub feature_type: String,
-    pub prerequisite: Option<JsonValue>,
-    pub entries: Vec<JsonValue>,
 }
 
 // ── Class Resources ──
@@ -399,4 +346,15 @@ fn collect_text(val: &JsonValue, out: &mut Vec<String>) {
         }
         _ => {}
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Subrace {
+    pub id: i32,
+    pub name: String,
+    pub source_id: i32,
+    pub race_id: i32,
+    pub speed: Option<JsonValue>,
+    pub ability_bonuses: Option<JsonValue>,
+    pub entries: Option<JsonValue>,
 }

@@ -3,284 +3,337 @@ use crate::models::app_state::CharacterCreationStep;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap},
 };
 
-pub fn render(app: &mut App, frame: &mut Frame) {
-    let area = frame.area();
+pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
+    let body = Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).split(area);
 
-    // 1) Layout: Title, Body, Help
-    let outer = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(0),
-        Constraint::Length(2),
-    ])
-    .split(area);
-
-    let title = Paragraph::new(" Character Builder: Step 3 - Class ")
-        .style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-        .block(Block::default().borders(Borders::BOTTOM));
-    frame.render_widget(title, outer[0]);
-
-    // 2) Body Layout: List (Left), Details (Right)
-    let body = Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)])
-        .split(outer[1]);
-
-    // 3) Render List
-    let items: Vec<ListItem> = app
-        .classes
-        .iter()
-        .map(|c| {
-            ListItem::new(Line::from(vec![
-                Span::raw(c.name.clone()),
-                Span::raw(" "),
-                Span::styled(
-                    format!("[{}]", c.source_slug),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]))
-        })
-        .collect();
+    // ── Left: Class list ──
+    let items: Vec<ListItem> = app.classes.iter().map(|c| {
+        let is_selected = Some(c.id) == app.builder.class_id;
+        let style = if is_selected {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        ListItem::new(Line::from(vec![
+            Span::styled(c.name.clone(), style),
+            Span::styled(format!(" [{}]", c.source_slug), Style::default().fg(Color::DarkGray)),
+        ]))
+    }).collect();
 
     let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Select Class "),
-        )
-        .highlight_style(
-            Style::default()
-                .bg(Color::Cyan)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        )
+        .block(Block::default().borders(Borders::ALL).title(" Select Class ").border_style(Style::default().fg(Color::DarkGray)))
+        .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD))
         .highlight_symbol(">> ");
     frame.render_stateful_widget(list, body[0], &mut app.builder.list_state);
 
-    // 4) Render Selected Class Details
+    // ── Right: Level table + class info ──
+    let right = Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).split(body[1]);
+
+    // Level selector header
+    let subclass_indicator = if app.builder.subclass_id.is_some() {
+        let sc_name = app.class_detail.as_ref()
+            .and_then(|d| d.subclasses.iter().find(|s| Some(s.subclass.id) == app.builder.subclass_id))
+            .map(|s| s.subclass.name.clone())
+            .unwrap_or_default();
+        format!(" | Subclass: {}", sc_name)
+    } else if app.builder.level >= 3 {
+        " | [Enter 'S' to pick subclass]".to_string()
+    } else {
+        String::new()
+    };
+
+    let level_header = Paragraph::new(Line::from(vec![
+        Span::styled("Level: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{}", app.builder.level), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled("  (-/+ to change)", Style::default().fg(Color::DarkGray)),
+        Span::styled(subclass_indicator, Style::default().fg(Color::Cyan)),
+    ]))
+    .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::DarkGray)));
+    frame.render_widget(level_header, right[0]);
+
+    // Level progression table
     if let Some(idx) = app.builder.list_state.selected() {
-        if let Some(class) = app.classes.get(idx) {
-            let mut lines = Vec::new();
+        // clone class to avoid holding an immutable borrow while rendering (rendering needs &mut App)
+        if let Some(class) = app.classes.get(idx).cloned() {
+            render_class_detail(app, frame, right[1], &class);
+        }
+    }
+}
 
-            lines.push(Line::from(vec![
-                Span::styled(
-                    class.name.clone(),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::styled(
-                    format!("[{}]", class.source_slug),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]));
-            lines.push(Line::from(""));
+fn render_class_detail(app: &mut App, frame: &mut Frame, area: Rect, class: &crate::models::Class) {
+    let panel = Layout::vertical([Constraint::Percentage(55), Constraint::Percentage(45)]).split(area);
 
-            // Core features
-            lines.push(Line::from(vec![
-                Span::styled("Hit Die: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(format!("d{}", class.hit_die)),
-            ]));
+    // Progression table
+    let prof_bonus = |lvl: i32| -> i32 { ((lvl - 1) / 4) + 2 };
 
-            if let Some(saves) = &class.proficiency_saves {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        "Saving Throws: ",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(saves.join(", ")),
-                ]));
-            }
+    // Use class_detail only if it matches the class being rendered; otherwise treat as empty to avoid showing stale data
+    let features = if app.class_detail.as_ref().map(|d| d.class.id) == Some(class.id) {
+        app.class_detail.as_ref().map(|d| d.features.clone()).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
-            if let Some(armor) = &class.armor_proficiencies {
-                lines.push(Line::from(vec![
-                    Span::styled("Armor: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(armor.join(", ")),
-                ]));
-            }
+    let header = Row::new(vec![
+        Cell::from("Lvl").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Cell::from("Prof").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Cell::from("Cantrips").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Cell::from("Prepared").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Cell::from("Slots(1..9)").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Cell::from("Features").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+    ])
+    .height(1);
 
-            if let Some(weapons) = &class.weapon_proficiencies {
-                lines.push(Line::from(vec![
-                    Span::styled("Weapons: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(weapons.join(", ")),
-                ]));
-            }
+    // If class_detail doesn't match this class, show loading placeholder instead of stale features
+    let detail_loaded = app.class_detail.as_ref().map(|d| d.class.id) == Some(class.id);
 
-            lines.push(Line::from(""));
-
-            // Spellcasting snippet
-            if let Some(spell_ability) = &class.spellcasting_ability {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        "Spellcasting Ability: ",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(spell_ability),
-                ]));
-                if let Some(progression) = &class.caster_progression {
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            "Progression: ",
-                            Style::default().add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(progression),
-                    ]));
+    // Attempt to extract cantrips/prepared from class_table if available
+    let mut table_cantrips: Vec<Option<String>> = vec![None; 20];
+    let mut table_prepared: Vec<Option<String>> = vec![None; 20];
+    if let Some(tbl) = &class.class_table {
+        for (i, entry) in tbl.iter().enumerate().take(20) {
+            if let Some(arr) = entry.as_array() {
+                // Heuristic: if array length >= 2, assume [cantrips, prepared, ...]
+                if arr.len() >= 1 {
+                    table_cantrips[i] = Some(arr[0].to_string().trim_matches('"').to_string());
                 }
-                lines.push(Line::from(
-                    "*(You will select spells later in the character sheet!)*",
-                ));
-                lines.push(Line::from(""));
+                if arr.len() >= 2 {
+                    table_prepared[i] = Some(arr[1].to_string().trim_matches('"').to_string());
+                }
             }
-
-            // Subclass naming flavor
-            if let Some(sub_title) = &class.subclass_title {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        "Subclass Title: ",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(sub_title),
-                ]));
-            }
-
-            let detail_p = Paragraph::new(lines)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Class Features "),
-                )
-                .wrap(Wrap { trim: true });
-            frame.render_widget(detail_p, body[1]);
         }
     }
 
-    // 5) Help Footer
-    let help = Paragraph::new("↑↓ select   Enter confirm   Esc back to race")
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(help, outer[2]);
+    // Helper to render spell slots for a level (abbreviated to 1..5)
+    let slot_str_for_level = |lvl: usize| -> String {
+        if let Some(slots) = &class.spell_slots {
+            if let Some(row) = slots.get(lvl) {
+                // show up to 5 slot levels (1..5) for compactness
+                let mut parts = Vec::new();
+                for (idx, &v) in row.iter().enumerate().take(5) {
+                    let display = if v <= 0 { "—".to_string() } else { v.to_string() };
+                    parts.push(format!("{}:{}", idx + 1, display));
+                }
+                return parts.join(" ");
+            }
+        }
+        "—".to_string()
+    };
+
+    // truncate long strings for cantrips/prepared/features to keep table readable
+    let truncate = |s: &str, n: usize| {
+        if s.len() <= n { s.to_string() } else { format!("{}…", &s[..n.saturating_sub(1)]) }
+    };
+
+    if !detail_loaded {
+        let loading = Paragraph::new(Span::styled("Loading class details...", Style::default().fg(Color::DarkGray)))
+            .block(Block::default().borders(Borders::ALL).title(" Level Progression (1-20) ").border_style(Style::default().fg(Color::DarkGray)));
+        frame.render_widget(loading, panel[0]);
+    } else {
+        let rows: Vec<Row> = (1i32..=20).map(|lvl| {
+            let li = (lvl - 1) as usize;
+            let is_current = lvl == app.builder.level;
+            let feats_at_level: Vec<&str> = features.iter()
+                .filter(|f| f.level == lvl && !f.is_subclass_gate)
+                .map(|f| f.name.as_str())
+                .collect();
+            let feat_str_raw = if feats_at_level.is_empty() { "—".to_string() } else { feats_at_level.join(", ") };
+            let feat_str = truncate(&feat_str_raw, 40);
+
+            let cantrips_raw = table_cantrips.get(li).and_then(|o| o.clone()).unwrap_or_else(|| "—".to_string());
+            let cantrips = truncate(&cantrips_raw, 8);
+            let prepared_raw = table_prepared.get(li).and_then(|o| o.clone()).unwrap_or_else(|| "—".to_string());
+            let prepared = truncate(&prepared_raw, 8);
+            let slots = slot_str_for_level(li);
+
+            let style = if is_current {
+                Style::default().bg(Color::DarkGray).fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+
+            Row::new(vec![
+                Cell::from(format!("{:>2}", lvl)),
+                Cell::from(format!("+{}", prof_bonus(lvl))),
+                Cell::from(cantrips),
+                Cell::from(prepared),
+                Cell::from(slots),
+                Cell::from(feat_str),
+            ]).style(style)
+        }).collect();
+
+        let table = Table::new(rows, [Constraint::Length(4), Constraint::Length(5), Constraint::Length(9), Constraint::Length(9), Constraint::Length(18), Constraint::Min(0)])
+            .header(header)
+            .block(Block::default().borders(Borders::ALL).title(" Level Progression (1-20) ").border_style(Style::default().fg(Color::DarkGray)));
+        frame.render_stateful_widget(table, panel[0], &mut app.builder.progression_table_state);
+    }
+
+    // Class info summary
+    let mut info_lines = Vec::new();
+    info_lines.push(Line::from(vec![
+        Span::styled(class.name.clone(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("  d{} Hit Die", class.hit_die), Style::default().fg(Color::DarkGray)),
+    ]));
+    if let Some(saves) = &class.proficiency_saves {
+        info_lines.push(Line::from(vec![
+            Span::styled("Saves: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(saves.join(", ").to_uppercase()),
+        ]));
+    }
+    if let Some(ability) = &class.spellcasting_ability {
+        info_lines.push(Line::from(vec![
+            Span::styled("Spellcasting: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(ability.to_uppercase()),
+        ]));
+    }
+    if let Some(sub_title) = &class.subclass_title {
+        info_lines.push(Line::from(vec![
+            Span::styled("Subclass Type: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(sub_title.clone()),
+        ]));
+    }
+    if app.builder.level >= 3 {
+        info_lines.push(Line::from(""));
+        info_lines.push(Line::from(Span::styled(
+            "  Level 3+: Press 'S' to choose a Subclass",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
+        )));
+    }
+
+    let info_p = Paragraph::new(info_lines)
+        .block(Block::default().borders(Borders::ALL).title(" Class Info ").border_style(Style::default().fg(Color::DarkGray)))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(info_p, panel[1]);
 }
 
 pub fn handle_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
-            app.builder.step = CharacterCreationStep::Race;
-            // Best effort to find their previous race selection
-            let idx = app
-                .builder
-                .race_id
-                .and_then(|id| app.races.iter().position(|r| r.id == id))
-                .unwrap_or(0);
-            app.builder.list_state.select(Some(idx));
+            app.screen = crate::models::app_state::Screen::CharacterList;
+            app.builder = crate::models::app_state::BuilderState::default();
         }
         KeyCode::Up => {
+            let len = app.classes.len();
             let i = match app.builder.list_state.selected() {
-                Some(i) => {
-                    if i > 0 {
-                        i - 1
-                    } else {
-                        app.classes.len().saturating_sub(1)
-                    }
-                }
-                None => 0,
+                Some(0) | None => len.saturating_sub(1),
+                Some(i) => i - 1,
             };
             app.builder.list_state.select(Some(i));
+            // Load class details for the new selection
+            load_class_detail_for_selected(app);
+            // ensure progression table selection follows current level
+            app.builder.progression_table_state.select(Some((app.builder.level - 1) as usize));
         }
         KeyCode::Down => {
+            let len = app.classes.len();
             let i = match app.builder.list_state.selected() {
-                Some(i) => {
-                    if i + 1 < app.classes.len() {
-                        i + 1
-                    } else {
-                        0
-                    }
-                }
-                None => 0,
+                Some(i) if i + 1 < len => i + 1,
+                _ => 0,
             };
             app.builder.list_state.select(Some(i));
+            load_class_detail_for_selected(app);
+            app.builder.progression_table_state.select(Some((app.builder.level - 1) as usize));
+        }
+        KeyCode::Char('-') | KeyCode::Char('_') => {
+            if app.builder.level > 1 {
+                app.builder.level -= 1;
+                if app.builder.level < 3 {
+                    app.builder.subclass_id = None;
+                }
+                app.builder.progression_table_state.select(Some((app.builder.level - 1) as usize));
+            }
+        }
+        KeyCode::Char('+') | KeyCode::Char('=') => {
+            if app.builder.level < 20 {
+                app.builder.level += 1;
+            }
+            // Ensure progression table selection keeps up with level
+            app.builder.progression_table_state.select(Some((app.builder.level - 1) as usize));
+            // Auto-trigger subclass modal at level 3 if no subclass yet
+            if app.builder.level >= 3 && app.builder.subclass_id.is_none() {
+                let has_subclasses = app.class_detail.as_ref().map(|d| !d.subclasses.is_empty()).unwrap_or(false);
+                if has_subclasses {
+                    app.builder.show_subclass_modal = true;
+                    app.builder.subclass_list_state.select(Some(0));
+                }
+            }
+        }
+        KeyCode::Char('s') | KeyCode::Char('S') => {
+            if app.builder.level >= 3 {
+                let has_subclasses = app.class_detail.as_ref().map(|d| !d.subclasses.is_empty()).unwrap_or(false);
+                if has_subclasses {
+                    app.builder.show_subclass_modal = true;
+                    app.builder.subclass_list_state.select(Some(0));
+                } else {
+                    app.status_msg = "No subclasses available for this class.".to_string();
+                }
+            } else {
+                app.status_msg = format!("Reach level 3 to pick a subclass (currently level {}).", app.builder.level);
+            }
         }
         KeyCode::Enter => {
             if let Some(idx) = app.builder.list_state.selected() {
-                if let Some(_class) = app.classes.get(idx) {
-                    // Class selected, figure out routing and state
-                    let selected_class = &app.classes[app.builder.list_state.selected().unwrap()];
-                    app.builder.class_id = Some(selected_class.id);
+                if let Some(class) = app.classes.get(idx) {
+                    // Clone needed values early to avoid holding an immutable borrow across mutable calls
+                    let class_id = class.id;
+                    let caster_progression = class.caster_progression.clone();
 
-                    // Default to none unless we see a caster progression
-                    app.builder.spellcasting_type = "none".to_string();
-                    if let Some(progression) = selected_class.caster_progression.as_ref() {
-                        if !progression.is_empty() && progression != "none" {
-                            app.builder.spellcasting_type = progression.clone();
-                        }
-                    }
-                    
-                    // Extra check: if backend has spellcasting_ability, it's a caster!
-                    if app.builder.spellcasting_type == "none" && selected_class.spellcasting_ability.is_some() {
-                        app.builder.spellcasting_type = "half".to_string(); // Assume half for Paladin/Ranger if unspecified
+                    // Load class details if not yet loaded
+                    if app.class_detail.as_ref().map(|d| d.class.id != class_id).unwrap_or(true) {
+                        load_class_detail_for_selected(app);
                     }
 
-                    // Look up subclasses to evaluate lock level.
-                    // This data comes from the API when we need it, but for wizard routing
-                    // we can fetch it now.
-                    app.builder.skip_subclass = true; // Default
-                    let class_name = selected_class.name.clone();
-                    let source_slug = selected_class.source_slug.clone();
+                    app.builder.class_id = Some(class_id);
+                    // Ensure progression table selection aligns with current level
+                    app.builder.progression_table_state.select(Some((app.builder.level - 1) as usize));
+                    app.builder.spellcasting_type = caster_progression
+                        .filter(|p| !p.is_empty() && p != "none")
+                        .unwrap_or_else(|| "none".to_string());
 
-                    let rt = app.rt.clone();
-                    let client = app.client.clone();
-                    let res = rt.block_on(async {
-                        client.get_class_detail(&class_name, &source_slug).await
-                    });
+                    // Check connectivity and save draft before advancing
+                    if !app.save_draft() {
+                        return; // save_draft sets status_msg on failure
+                    }
 
-                    let mut details_opt = None;
-                    if let Ok(details) = res {
-                        details_opt = Some(details.clone());
-                        if !details.subclasses.is_empty() {
-                            if details.subclasses[0].subclass.unlock_level == 1 {
-                                app.builder.skip_subclass = false;
-                            }
+                    // If level 3+ and has subclasses but none chosen, prompt for subclass first
+                    if app.builder.level >= 3 && app.builder.subclass_id.is_none() {
+                        let has_subclasses = app.class_detail.as_ref().map(|d| !d.subclasses.is_empty()).unwrap_or(false);
+                        if has_subclasses {
+                            app.builder.show_subclass_modal = true;
+                            app.builder.subclass_list_state.select(Some(0));
+                            return;
                         }
                     }
 
-                    // Check for Weapon Mastery feature at level 1 (2024 Paladin/Fighter etc.)
-                    let mut weapon_mastery_feat = None;
-                    
-                    if let Some(details) = details_opt {
-                        for feat in details.features {
-                            if feat.level == 1 {
-                                let interpreted = feat.interpret();
-                                if let crate::models::features::Feature::WeaponMastery { choose } = interpreted {
-                                    weapon_mastery_feat = Some(choose);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some(choose) = weapon_mastery_feat {
-                        app.builder.builder_pending_feature = Some(crate::models::features::Feature::WeaponMastery { choose });
-                        app.builder.step = CharacterCreationStep::FeatWeaponMastery;
-                        app.builder.feat_picker_index = 0;
-                        app.builder.feat_picker_search.clear();
-                    } else if app.builder.skip_subclass {
-                        app.builder.step = CharacterCreationStep::Abilities;
-                    } else {
-                        app.builder.step = CharacterCreationStep::Subclass;
-                    }
-
+                    app.builder.step = CharacterCreationStep::Background;
                     app.builder.list_state.select(Some(0));
-                    app.builder.subclass_id = None; // reset on changing class
                     app.status_msg.clear();
                 }
             }
         }
         _ => {}
+    }
+}
+
+fn load_class_detail_for_selected(app: &mut App) {
+    if let Some(idx) = app.builder.list_state.selected() {
+        if let Some(class) = app.classes.get(idx) {
+            let name = class.name.clone();
+            let source = class.source_slug.clone();
+            let current_id = app.class_detail.as_ref().map(|d| d.class.id);
+            if current_id != Some(class.id) {
+                let rt = app.rt.clone();
+                let client = app.client.clone();
+                match rt.block_on(client.get_class_detail(&name, &source)) {
+                    Ok(detail) => { app.class_detail = Some(detail); }
+                    Err(_) => {}
+                }
+            }
+        }
     }
 }
