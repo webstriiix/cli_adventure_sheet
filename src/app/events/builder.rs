@@ -105,7 +105,7 @@ use crate::models::{CreateCharacterRequest, UpdateCharacterRequest, app_state::B
             temp_hp: Some(0),
             inspiration: Some(false),
             notes: notes.clone(),
-            experience_pts: Some(0),
+            experience_pts: Some(crate::models::rules::xp_from_level(app.builder.level)),
             race_id: req.race_id,
             subrace_id: req.subrace_id,
             background_id: req.background_id,
@@ -116,13 +116,13 @@ use crate::models::{CreateCharacterRequest, UpdateCharacterRequest, app_state::B
         } else {
             match rt.block_on(app.client.create_character(&req)) {
                 Ok(c) => {
-                    if let Some(ref notes_text) = notes {
-                        let update = UpdateCharacterRequest {
-                            notes: Some(notes_text.clone()),
-                            ..UpdateCharacterRequest::from_character(&c, class_id)
-                        };
-                        let _ = rt.block_on(app.client.update_character(c.id, &update));
-                    }
+                    let xp = crate::models::rules::xp_from_level(app.builder.level);
+                    let update = UpdateCharacterRequest {
+                        notes: notes.clone(),
+                        experience_pts: Some(xp),
+                        ..UpdateCharacterRequest::from_character(&c, class_id)
+                    };
+                    let _ = rt.block_on(app.client.update_character(c.id, &update));
                     Ok(c)
                 }
                 Err(e) => Err(e),
@@ -134,11 +134,11 @@ use crate::models::{CreateCharacterRequest, UpdateCharacterRequest, app_state::B
                 let id = character.id;
                 app.active_class_id = class_id;
                 
-                // If subclass is selected, update subclass mapping
-                if let Some(subclass_id) = app.builder.subclass_id {
+                // Update primary class level and subclass if level is elevated or subclass is selected
+                if app.builder.level > 1 || app.builder.subclass_id.is_some() {
                     let patch_req = crate::models::character::PatchCharacterClassRequest {
-                        subclass_id: Some(subclass_id),
-                        level: Some(1),
+                        subclass_id: app.builder.subclass_id,
+                        level: Some(app.builder.level),
                     };
                     let _ = rt.block_on(app.client.patch_character_class(id, class_id, &patch_req));
                 }

@@ -31,10 +31,14 @@ impl App {
 
         let asi_levels = Self::asi_levels_for_class(&class_name);
 
+        // Whether the character already has a subclass — use char_classes (authoritative)
+        // rather than char_subclass_name which can be stale from the local cache.
+        let has_subclass = self.char_classes.first().and_then(|cc| cc.subclass_id).is_some();
+
         // Check each level between old+1 and new_level (inclusive)
         for lvl in (old_level + 1)..=(new_level) {
             // Subclass gate — only if subclass not already set
-            if lvl == subclass_gate && self.char_subclass_name.is_empty() {
+            if lvl == subclass_gate && !has_subclass {
                 self.level_up_queue.push(LevelUpPrompt::SubclassChoice {
                     class_id,
                     class_name: class_name.clone(),

@@ -510,6 +510,23 @@ impl App {
             self.char_actions = Some(actions);
         }
 
+        // Check if the character is missing a subclass despite meeting the level requirement
+        let subclass_gate = self
+            .class_detail
+            .as_ref()
+            .and_then(|d| d.features.iter().find(|f| f.is_subclass_gate).map(|f| f.level))
+            .unwrap_or(3);
+
+        let has_subclass = self.char_classes.first().and_then(|cc| cc.subclass_id).is_some();
+
+        if char_level >= subclass_gate && !has_subclass {
+            let class_name = self.char_class_name.clone();
+            self.level_up_queue.push(crate::app::LevelUpPrompt::SubclassChoice {
+                class_id: first_class_id,
+                class_name,
+            });
+        }
+
         self.screen = Screen::CharacterSheet;
         self.sheet_tab = SheetTab::CoreStats;
         self.sheet_tab_index = 0;
