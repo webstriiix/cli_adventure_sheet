@@ -177,6 +177,37 @@ pub struct BuilderState {
     pub show_progression_wm_modal: bool,
     pub progression_slot_level: Option<i32>,
     pub progression_blink_tick: u64,
+
+    // --- MULTI-STAGE ASI MODAL ---
+    /// Which stage the ASI modal is on.
+    pub asi_modal_stage: AsiModalStage,
+    /// Cursor inside the mode-selection stage (0 = Stats, 1 = Feat).
+    pub asi_mode_cursor: usize,
+    /// The two stat-slots for a +1/+1 or +2 choice.
+    /// Each is `None` (unset) or `Some(stat_index)` where 0=STR…5=CHA.
+    pub asi_stat_slots: [Option<usize>; 2],
+    /// Which of the two stat-slots is currently active (0 or 1).
+    pub asi_active_slot: usize,
+    /// Whether a stat-picker sub-list is open for the active slot.
+    pub asi_stat_picker_open: bool,
+    /// Cursor within the 6-stat picker list.
+    pub asi_stat_picker_cursor: usize,
+    /// Search string for the feat picker inside the ASI modal.
+    pub asi_feat_search: String,
+    /// Cursor within the filtered feat list in the ASI modal.
+    pub asi_feat_cursor: usize,
+}
+
+/// Tracks which stage the multi-step ASI / Feat modal is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AsiModalStage {
+    /// Stage 1: choose between Stat Improvement or General Feat.
+    #[default]
+    Mode,
+    /// Stage 2a: pick which stats to improve (+2 total across two slots).
+    Stats,
+    /// Stage 2b: pick a feat from the list.
+    Feat,
 }
 
 impl Default for BuilderState {
@@ -263,6 +294,14 @@ impl Default for BuilderState {
             show_progression_wm_modal: false,
             progression_slot_level: None,
             progression_blink_tick: 0,
+            asi_modal_stage: AsiModalStage::Mode,
+            asi_mode_cursor: 0,
+            asi_stat_slots: [None, None],
+            asi_active_slot: 0,
+            asi_stat_picker_open: false,
+            asi_stat_picker_cursor: 0,
+            asi_feat_search: String::new(),
+            asi_feat_cursor: 0,
         }
     }
 }

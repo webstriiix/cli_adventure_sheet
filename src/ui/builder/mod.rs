@@ -92,7 +92,18 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     } else if app.builder.show_feat_modal {
         "↑↓ select feat   Enter confirm   Esc close"
     } else if app.builder.show_progression_asi_modal {
-        "↑↓ select ASI option   Enter submit   Esc close"
+        use crate::models::app_state::AsiModalStage;
+        match app.builder.asi_modal_stage {
+            AsiModalStage::Mode => "↑↓ select mode   A/B or Enter choose   Esc close",
+            AsiModalStage::Stats => {
+                if app.builder.asi_stat_picker_open {
+                    "↑↓ pick stat   Enter confirm   Esc close picker"
+                } else {
+                    "↑↓ switch slot   Space/Enter open picker   D clear   Enter submit   Esc back"
+                }
+            }
+            AsiModalStage::Feat => "↑↓ navigate   Type to search   Enter confirm   Esc back",
+        }
     } else if app.builder.show_progression_wm_modal {
         "↑↓ select weapon   Enter confirm   Esc close"
     } else if app.builder.feature_detail_modal.is_some() {
@@ -305,108 +316,562 @@ fn handle_feat_modal_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-// ── Progression ASI Modal ──
+// ── Progression ASI Modal (multi-stage) ──────────────────────────────────────
 
-fn asi_options() -> Vec<(&'static str, [i32; 6])> {
-    vec![
-        ("+2 Strength", [2, 0, 0, 0, 0, 0]),
-        ("+2 Dexterity", [0, 2, 0, 0, 0, 0]),
-        ("+2 Constitution", [0, 0, 2, 0, 0, 0]),
-        ("+2 Intelligence", [0, 0, 0, 2, 0, 0]),
-        ("+2 Wisdom", [0, 0, 0, 0, 2, 0]),
-        ("+2 Charisma", [0, 0, 0, 0, 0, 2]),
-        ("+1 Strength, +1 Constitution", [1, 0, 1, 0, 0, 0]),
-        ("+1 Dexterity, +1 Constitution", [0, 1, 1, 0, 0, 0]),
-        ("+1 Intelligence, +1 Wisdom", [0, 0, 0, 1, 1, 0]),
-    ]
-}
+const STAT_NAMES: [&str; 6] = ["Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"];
+const STAT_SHORT: [&str; 6] = ["STR", "DEX", "CON", "INT", "WIS", "CHA"];
 
 fn render_progression_asi_modal(app: &mut App, frame: &mut Frame, area: Rect) {
-    let popup_area = centered_popup(area, 60, 15);
-    frame.render_widget(Clear, popup_area);
-
-    let opts = asi_options();
+    use crate::models::app_state::AsiModalStage;
     let lvl = app.builder.progression_slot_level.unwrap_or(4);
 
-    let items: Vec<ListItem> = opts
+    match app.builder.asi_modal_stage {
+        AsiModalStage::Mode => render_asi_mode_stage(app, frame, area, lvl),
+        AsiModalStage::Stats => render_asi_stats_stage(app, frame, area, lvl),
+        AsiModalStage::Feat => render_asi_feat_stage(app, frame, area, lvl),
+    }
+}
+
+fn render_asi_mode_stage(app: &App, frame: &mut Frame, area: Rect, lvl: i32) {
+    let popup_area = centered_popup(area, 55, 10);
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(format!(" ASI / Feat Choice — Level {} ", lvl))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let rows = Layout::vertical([
+        Constraint::Length(1), // hint
+        Constraint::Length(1), // spacer
+        Constraint::Length(3), // option A
+        Constraint::Length(1), // spacer
+        Constraint::Length(3), // option B
+    ])
+    .split(inner);
+
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            "  Choose one:",
+            Style::default().fg(Color::DarkGray),
+        )),
+        rows[0],
+    );
+
+    let (a_style, b_style) = if app.builder.asi_mode_cursor == 0 {
+        (
+            Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::White),
+        )
+    } else {
+        (
+            Style::default().fg(Color::White),
+            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )
+    };
+
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(" [ A ]  Ability Score Improvement ", a_style)),
+            Line::from(Span::styled("        +2 to one stat, or +1 to two stats", Style::default().fg(Color::DarkGray))),
+        ]),
+        rows[2],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(" [ B ]  Choose a General Feat ", b_style)),
+            Line::from(Span::styled("        Pick any feat you qualify for", Style::default().fg(Color::DarkGray))),
+        ]),
+        rows[4],
+    );
+}
+
+fn render_asi_stats_stage(app: &mut App, frame: &mut Frame, area: Rect, lvl: i32) {
+    let popup_area = centered_popup(area, 60, 20);
+    frame.render_widget(Clear, popup_area);
+
+    // Gather current ability scores for reference
+    let scores: [i32; 6] = if let Some(ref c) = app.active_character {
+        [c.strength, c.dexterity, c.constitution, c.intelligence, c.wisdom, c.charisma]
+    } else {
+        let b = &app.builder;
+        [
+            b.abilities[0] + b.bg_ability_bonuses[0],
+            b.abilities[1] + b.bg_ability_bonuses[1],
+            b.abilities[2] + b.bg_ability_bonuses[2],
+            b.abilities[3] + b.bg_ability_bonuses[3],
+            b.abilities[4] + b.bg_ability_bonuses[4],
+            b.abilities[5] + b.bg_ability_bonuses[5],
+        ]
+    };
+
+    let block = Block::default()
+        .title(format!(" Ability Score Improvement — Level {} ", lvl))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    // Decide total bonus display
+    let slot0 = app.builder.asi_stat_slots[0];
+    let slot1 = app.builder.asi_stat_slots[1];
+    let bonus_hint = match (slot0, slot1) {
+        (Some(a), Some(b)) if a == b => format!("+2 {}", STAT_SHORT[a]),
+        (Some(a), Some(b)) => format!("+1 {} / +1 {}", STAT_SHORT[a], STAT_SHORT[b]),
+        (Some(a), None) => format!("+1 {} / +1 ?", STAT_SHORT[a]),
+        _ => "+1 ? / +1 ?".to_string(),
+    };
+
+    let sections = Layout::vertical([
+        Constraint::Length(1), // hint
+        Constraint::Length(1), // bonus summary
+        Constraint::Length(1), // spacer
+        Constraint::Length(3), // slot 0
+        Constraint::Length(1), // spacer
+        Constraint::Length(3), // slot 1
+        Constraint::Min(0),    // stat picker (shown inline when open)
+    ])
+    .split(inner);
+
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            "  Select two stat slots (same stat = +2, different = +1/+1):",
+            Style::default().fg(Color::DarkGray),
+        )),
+        sections[0],
+    );
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            format!("  Total bonus: {}", bonus_hint),
+            Style::default().fg(Color::Cyan),
+        )),
+        sections[1],
+    );
+
+    for (slot_idx, section) in [(0usize, sections[3]), (1usize, sections[5])] {
+        let is_active = app.builder.asi_active_slot == slot_idx;
+        let label = match app.builder.asi_stat_slots[slot_idx] {
+            Some(s) => format!("  Slot {}: {} ({}) ", slot_idx + 1, STAT_NAMES[s], scores[s]),
+            None => format!("  Slot {}: [ SELECT STAT ] ", slot_idx + 1),
+        };
+        let style = if is_active {
+            Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(label, style))).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(if is_active {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    }),
+            ),
+            section,
+        );
+    }
+
+    // Inline stat picker when open
+    if app.builder.asi_stat_picker_open {
+        let picker_area = sections[6];
+        let items: Vec<ListItem> = STAT_NAMES
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let cursor = if i == app.builder.asi_stat_picker_cursor { ">> " } else { "   " };
+                ListItem::new(Line::from(vec![
+                    Span::styled(cursor, Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        format!("{:<14} ({})", name, scores[i]),
+                        Style::default().fg(Color::White),
+                    ),
+                ]))
+            })
+            .collect();
+        let picker = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Pick Stat ")
+                    .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            )
+            .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black));
+        frame.render_widget(picker, picker_area);
+    }
+}
+
+fn render_asi_feat_stage(app: &mut App, frame: &mut Frame, area: Rect, lvl: i32) {
+    let popup_area = centered_popup(area, 65, 22);
+    frame.render_widget(Clear, popup_area);
+
+    let search = app.builder.asi_feat_search.to_lowercase();
+    let filtered: Vec<&crate::models::Feat> = app
+        .all_feats
         .iter()
-        .map(|(label, _)| ListItem::new(Line::from(Span::raw(format!("  {}", label)))))
+        .filter(|f| search.is_empty() || f.name.to_lowercase().contains(&search))
         .collect();
 
-    let title = format!(" Choose Ability Score Improvement (Level {}) ", lvl);
+    let len = filtered.len();
+    // Clamp cursor and keep list_state in sync so Ratatui scrolls the viewport.
+    let cursor = app.builder.asi_feat_cursor.min(len.saturating_sub(1));
+    app.builder.asi_feat_cursor = cursor;
+    app.builder.feat_list_state.select(if len == 0 { None } else { Some(cursor) });
+
+    let items: Vec<ListItem> = filtered
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let is_cur = i == cursor;
+            let prefix = if is_cur { ">> " } else { "   " };
+            let style = if is_cur {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(Color::Cyan)),
+                Span::styled(f.name.clone(), style),
+            ]))
+        })
+        .collect();
+
+    let count_hint = if search.is_empty() {
+        format!("{} feats", len)
+    } else {
+        format!("{}/{} feats", len, app.all_feats.len())
+    };
+
+    let title = format!(
+        " Choose Feat — Level {}   {}   Search: {}▌ ",
+        lvl,
+        count_hint,
+        app.builder.asi_feat_search,
+    );
+
     let list = List::new(items)
         .block(
             Block::default()
                 .title(title)
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                .border_style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
         )
-        .highlight_style(
-            Style::default()
-                .bg(Color::Yellow)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol(">> ");
+        // highlight_style applies to the selected item's background via ListState;
+        // the baked prefix gives a clear visual indicator on top of that.
+        .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
 
     frame.render_stateful_widget(list, popup_area, &mut app.builder.feat_list_state);
 }
 
 fn handle_progression_asi_modal_key(app: &mut App, key: KeyEvent) {
-    let opts = asi_options();
+    use crate::models::app_state::AsiModalStage;
+
+    match app.builder.asi_modal_stage {
+        AsiModalStage::Mode => handle_asi_mode_key(app, key),
+        AsiModalStage::Stats => handle_asi_stats_key(app, key),
+        AsiModalStage::Feat => handle_asi_feat_key(app, key),
+    }
+}
+
+fn handle_asi_mode_key(app: &mut App, key: KeyEvent) {
+    use crate::models::app_state::AsiModalStage;
     match key.code {
         KeyCode::Esc => {
             app.builder.show_progression_asi_modal = false;
+            app.builder.asi_modal_stage = AsiModalStage::Mode;
         }
-        KeyCode::Up => {
-            let cur = app.builder.feat_list_state.selected().unwrap_or(0);
-            let next = if cur > 0 { cur - 1 } else { opts.len() - 1 };
-            app.builder.feat_list_state.select(Some(next));
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.builder.asi_mode_cursor = 0;
         }
-        KeyCode::Down => {
-            let cur = app.builder.feat_list_state.selected().unwrap_or(0);
-            let next = if cur + 1 < opts.len() { cur + 1 } else { 0 };
-            app.builder.feat_list_state.select(Some(next));
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.builder.asi_mode_cursor = 1;
+        }
+        KeyCode::Char('a') | KeyCode::Char('A') => {
+            app.builder.asi_modal_stage = AsiModalStage::Stats;
+            app.builder.asi_stat_slots = [None, None];
+            app.builder.asi_active_slot = 0;
+            app.builder.asi_stat_picker_open = false;
+        }
+        KeyCode::Char('b') | KeyCode::Char('B') => {
+            app.builder.asi_modal_stage = AsiModalStage::Feat;
+            app.builder.asi_feat_cursor = 0;
+            app.builder.asi_feat_search.clear();
         }
         KeyCode::Enter => {
-            let selected = app.builder.feat_list_state.selected().unwrap_or(0);
-            if let Some((label, bumps)) = opts.get(selected) {
-                let char_id = app
-                    .builder
-                    .draft_id
-                    .or_else(|| app.active_character.as_ref().map(|c| c.id));
-
-                if let Some(id) = char_id {
-                    let req = crate::models::AsiChoiceRequest {
-                        bump_str: Some(bumps[0]),
-                        bump_dex: Some(bumps[1]),
-                        bump_con: Some(bumps[2]),
-                        bump_int: Some(bumps[3]),
-                        bump_wis: Some(bumps[4]),
-                        bump_cha: Some(bumps[5]),
-                        feat_id: None,
-                        source_type: Some("level".to_string()),
-                    };
-
-                    let rt = app.rt.clone();
-                    let client = app.client.clone();
-                    match rt.block_on(client.post_asi_choice(id, &req)) {
-                        Ok(_) => {
-                            app.status_msg = format!("ASI Choice '{}' saved!", label);
-                            step_class::refresh_progression_manifest(app);
-                        }
-                        Err(e) => {
-                            app.status_msg = format!("Failed to submit ASI choice: {}", e);
-                        }
-                    }
-                } else {
-                    app.status_msg = format!("ASI Choice '{}' selected locally.", label);
-                }
+            if app.builder.asi_mode_cursor == 0 {
+                app.builder.asi_modal_stage = AsiModalStage::Stats;
+                app.builder.asi_stat_slots = [None, None];
+                app.builder.asi_active_slot = 0;
+                app.builder.asi_stat_picker_open = false;
+            } else {
+                app.builder.asi_modal_stage = AsiModalStage::Feat;
+                app.builder.asi_feat_cursor = 0;
+                app.builder.asi_feat_search.clear();
             }
-            app.builder.show_progression_asi_modal = false;
         }
         _ => {}
     }
+}
+
+fn handle_asi_stats_key(app: &mut App, key: KeyEvent) {
+    use crate::models::app_state::AsiModalStage;
+
+    if app.builder.asi_stat_picker_open {
+        // ── Stat picker is open: navigate within the 6-stat list ────────────
+        match key.code {
+            KeyCode::Esc => {
+                app.builder.asi_stat_picker_open = false;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if app.builder.asi_stat_picker_cursor > 0 {
+                    app.builder.asi_stat_picker_cursor -= 1;
+                } else {
+                    app.builder.asi_stat_picker_cursor = 5;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.builder.asi_stat_picker_cursor =
+                    (app.builder.asi_stat_picker_cursor + 1) % 6;
+            }
+            KeyCode::Enter => {
+                let chosen = app.builder.asi_stat_picker_cursor;
+                app.builder.asi_stat_slots[app.builder.asi_active_slot] = Some(chosen);
+                app.builder.asi_stat_picker_open = false;
+                // Auto-advance to the other slot if it is still empty
+                let other = 1 - app.builder.asi_active_slot;
+                if app.builder.asi_stat_slots[other].is_none() {
+                    app.builder.asi_active_slot = other;
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // ── Picker closed: navigate the two slots ────────────────────────────────
+    match key.code {
+        KeyCode::Esc => {
+            // Step back to mode selection
+            app.builder.asi_modal_stage = AsiModalStage::Mode;
+            app.builder.asi_stat_slots = [None, None];
+            app.builder.asi_stat_picker_open = false;
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.builder.asi_active_slot = 0;
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.builder.asi_active_slot = 1;
+        }
+        KeyCode::Enter => {
+            // If both slots are filled → submit
+            if app.builder.asi_stat_slots[0].is_some()
+                && app.builder.asi_stat_slots[1].is_some()
+            {
+                submit_asi_stats(app);
+            } else {
+                // Open the picker for the active slot
+                app.builder.asi_stat_picker_open = true;
+                app.builder.asi_stat_picker_cursor =
+                    app.builder.asi_stat_slots[app.builder.asi_active_slot].unwrap_or(0);
+            }
+        }
+        KeyCode::Char(' ') => {
+            // Space opens picker for active slot
+            app.builder.asi_stat_picker_open = true;
+            app.builder.asi_stat_picker_cursor =
+                app.builder.asi_stat_slots[app.builder.asi_active_slot].unwrap_or(0);
+        }
+        KeyCode::Char('d') | KeyCode::Delete => {
+            // Clear active slot
+            app.builder.asi_stat_slots[app.builder.asi_active_slot] = None;
+        }
+        _ => {}
+    }
+}
+
+fn handle_asi_feat_key(app: &mut App, key: KeyEvent) {
+    use crate::models::app_state::AsiModalStage;
+    use crossterm::event::KeyModifiers;
+
+    let search = app.builder.asi_feat_search.to_lowercase();
+    let filtered_len = app
+        .all_feats
+        .iter()
+        .filter(|f| search.is_empty() || f.name.to_lowercase().contains(&search))
+        .count();
+
+    match key.code {
+        KeyCode::Esc => {
+            // Step back to mode selection
+            app.builder.asi_modal_stage = AsiModalStage::Mode;
+            app.builder.asi_feat_search.clear();
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.builder.asi_feat_cursor > 0 {
+                app.builder.asi_feat_cursor -= 1;
+            } else {
+                app.builder.asi_feat_cursor = filtered_len.saturating_sub(1);
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if filtered_len > 0 {
+                app.builder.asi_feat_cursor =
+                    (app.builder.asi_feat_cursor + 1) % filtered_len;
+            }
+        }
+        KeyCode::Backspace => {
+            app.builder.asi_feat_search.pop();
+            app.builder.asi_feat_cursor = 0;
+        }
+        KeyCode::Char(c)
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            app.builder.asi_feat_search.push(c);
+            app.builder.asi_feat_cursor = 0;
+        }
+        KeyCode::Enter => {
+            submit_asi_feat(app);
+        }
+        _ => {}
+    }
+}
+
+// ── Submit helpers ─────────────────────────────────────────────────────────────
+
+/// Build bumps array from the two stat slots and post to the API.
+fn submit_asi_stats(app: &mut App) {
+    use crate::models::app_state::AsiModalStage;
+
+    let slot0 = match app.builder.asi_stat_slots[0] {
+        Some(s) => s,
+        None => {
+            app.status_msg = "Please fill both stat slots.".to_string();
+            return;
+        }
+    };
+    let slot1 = match app.builder.asi_stat_slots[1] {
+        Some(s) => s,
+        None => {
+            app.status_msg = "Please fill both stat slots.".to_string();
+            return;
+        }
+    };
+
+    // Build bumps: same stat twice → +2; different → +1/+1
+    let mut bumps = [0i32; 6];
+    bumps[slot0] += 1;
+    bumps[slot1] += 1;
+
+    let label = if slot0 == slot1 {
+        format!("+2 {}", STAT_NAMES[slot0])
+    } else {
+        format!("+1 {} / +1 {}", STAT_NAMES[slot0], STAT_NAMES[slot1])
+    };
+
+    let char_id = app
+        .builder
+        .draft_id
+        .or_else(|| app.active_character.as_ref().map(|c| c.id));
+
+    if let Some(id) = char_id {
+        let req = crate::models::AsiChoiceRequest {
+            bump_str: Some(bumps[0]),
+            bump_dex: Some(bumps[1]),
+            bump_con: Some(bumps[2]),
+            bump_int: Some(bumps[3]),
+            bump_wis: Some(bumps[4]),
+            bump_cha: Some(bumps[5]),
+            feat_id: None,
+            source_type: Some("level".to_string()),
+        };
+        let rt = app.rt.clone();
+        let client = app.client.clone();
+        match rt.block_on(client.post_asi_choice(id, &req)) {
+            Ok(_) => {
+                app.status_msg = format!("ASI '{}' saved!", label);
+                step_class::refresh_progression_manifest(app);
+            }
+            Err(e) => {
+                app.status_msg = format!("Failed to save ASI: {}", e);
+                return;
+            }
+        }
+    } else {
+        app.status_msg = format!("ASI '{}' chosen (no draft yet).", label);
+    }
+
+    app.builder.show_progression_asi_modal = false;
+    app.builder.asi_modal_stage = AsiModalStage::Mode;
+    app.builder.asi_stat_slots = [None, None];
+}
+
+/// Pick the currently highlighted feat and post to the API.
+fn submit_asi_feat(app: &mut App) {
+    use crate::models::app_state::AsiModalStage;
+
+    let search = app.builder.asi_feat_search.to_lowercase();
+    let filtered: Vec<&crate::models::Feat> = app
+        .all_feats
+        .iter()
+        .filter(|f| search.is_empty() || f.name.to_lowercase().contains(&search))
+        .collect();
+
+    let cursor = app.builder.asi_feat_cursor.min(filtered.len().saturating_sub(1));
+    let feat = match filtered.get(cursor) {
+        Some(f) => (*f).clone(),
+        None => {
+            app.status_msg = "No feat selected.".to_string();
+            return;
+        }
+    };
+
+    let char_id = app
+        .builder
+        .draft_id
+        .or_else(|| app.active_character.as_ref().map(|c| c.id));
+
+    if let Some(id) = char_id {
+        let req = crate::models::AsiChoiceRequest {
+            bump_str: None,
+            bump_dex: None,
+            bump_con: None,
+            bump_int: None,
+            bump_wis: None,
+            bump_cha: None,
+            feat_id: Some(feat.id),
+            source_type: Some("level".to_string()),
+        };
+        let rt = app.rt.clone();
+        let client = app.client.clone();
+        match rt.block_on(client.post_asi_choice(id, &req)) {
+            Ok(_) => {
+                app.status_msg = format!("Feat '{}' saved!", feat.name);
+                step_class::refresh_progression_manifest(app);
+            }
+            Err(e) => {
+                app.status_msg = format!("Failed to save feat: {}", e);
+                return;
+            }
+        }
+    } else {
+        app.status_msg = format!("Feat '{}' chosen (no draft yet).", feat.name);
+    }
+
+    app.builder.show_progression_asi_modal = false;
+    app.builder.asi_modal_stage = AsiModalStage::Mode;
+    app.builder.asi_feat_search.clear();
+    app.builder.asi_feat_cursor = 0;
 }
 
 // ── Weapon Mastery Modal ──
