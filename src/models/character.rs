@@ -440,3 +440,37 @@ pub struct CharacterDraft {
     pub abilities: [i32; 6],
     pub equipment_option: Option<usize>,
 }
+
+// ── Progression Manifest ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DecisionStatus {
+    Pending,
+    Partial,
+    Complete,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecisionPointChoice {
+    pub id: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecisionPoint {
+    pub level: i32,
+    pub choice_type: String, // "asi" or "weapon_mastery"
+    pub required_count: i32,
+    pub current_choices: Vec<DecisionPointChoice>,
+    pub status: DecisionStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProgressionManifest {
+    pub character_id: Uuid,
+    pub total_level: i32,
+    pub class_name: String,
+    pub class_source: String,
+    pub decision_points: Vec<DecisionPoint>,
+}
+

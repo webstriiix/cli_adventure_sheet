@@ -1,6 +1,6 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
@@ -98,13 +98,11 @@ pub fn render(app: &App, frame: &mut Frame) {
     ])
     .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(help, chunks[help_idx]);
-// ... other code ...
+    // ... other code ...
     // Status message
     let status_idx = field_count + 2;
     if !app.status_msg.is_empty() {
-        let status = Paragraph::new(app.status_msg.as_str())
-            .style(Style::default().fg(Color::Red));
+        let status = Paragraph::new(app.status_msg.as_str()).style(Style::default().fg(Color::Red));
         frame.render_widget(status, chunks[status_idx]);
     }
 }
-

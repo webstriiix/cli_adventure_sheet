@@ -74,6 +74,28 @@ pub struct SubclassWithFeatures {
     pub features: Vec<SubclassFeature>,
 }
 
+impl SubclassFeature {
+    /// Convert to `ClassFeature`, combining `header` and `entries` so that
+    /// description_text() works correctly in the Ctrl+K detail modal.
+    pub fn to_class_feature(&self) -> ClassFeature {
+        ClassFeature {
+            id: self.id,
+            name: self.name.clone(),
+            source_slug: self.source_slug.clone(),
+            class_name: self.class_name.clone(),
+            level: self.level,
+            entries: {
+                let mut combined = self.entries.clone().unwrap_or_default();
+                if let Some(hdr) = &self.header {
+                    combined.insert(0, hdr.clone());
+                }
+                Some(combined)
+            },
+            is_subclass_gate: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClassDetailResponse {
     pub class: Class,
@@ -272,7 +294,135 @@ pub struct ClassResourceResponse {
     pub subclass_options: Option<Vec<SubclassOption>>,
 }
 
+// ── Class display helpers ────────────────────────────────────────────────────
+
+const _KNOWN_SKILLS: &[&str] = &[
+    "Acrobatics", "Animal Handling", "Arcana", "Athletics",
+    "Deception", "History", "Insight", "Intimidation",
+    "Investigation", "Medicine", "Nature", "Perception",
+    "Performance", "Persuasion", "Religion",
+    "Sleight of Hand", "Stealth", "Survival",
+];
+
+impl Class {
+    /// Parses `skill_choices` (5e-tools JSON) into a human-readable summary.
+    /// Example output: "Choose 2 from: Arcana, History, …"
+    pub fn skill_choices_summary(&self) -> String {
+        let arr = match self.skill_choices.as_array() {
+            Some(a) if !a.is_empty() => a,
+            _ => return String::new(),
+        };
+        let mut parts: Vec<String> = Vec::new();
+        for entry in arr {
+            if let Some(choose) = entry.get("choose").and_then(|v| v.as_i64()) {
+                let from_labels: Vec<String> = entry
+                    .get("from")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| {
+                                v.as_str()
+                                    .or_else(|| v.get("name").and_then(|n| n.as_str()))
+                                    .map(|s| s.to_string())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if from_labels.is_empty() {
+                    parts.push(format!("Choose {}", choose));
+                } else {
+                    parts.push(format!("Choose {} from: {}", choose, from_labels.join(", ")));
+                }
+            }
+        }
+        parts.join("; ")
+    }
+
+    /// Formats `starting_equipment` JSON into a compact summary line.
+    pub fn starting_equipment_summary(&self) -> String {
+        let val = &self.starting_equipment;
+
+        // 5e-tools "defaultData" wrapper
+        let data = val
+            .get("defaultData")
+            .or_else(|| {
+                // Also try direct array
+                if val.is_array() { Some(val) } else { None }
+            });
+
+        let arr = match data.and_then(|v| v.as_array()) {
+            Some(a) if !a.is_empty() => a,
+            _ => return String::new(),
+        };
+
+        let mut items: Vec<String> = Vec::new();
+        for entry in arr {
+            if let Some(item_val) = entry.get("item") {
+                let name = item_val
+                    .as_str()
+                    .unwrap_or("")
+                    .split('|')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                let qty = entry.get("quantity").and_then(|v| v.as_i64()).unwrap_or(1);
+                if !name.is_empty() {
+                    if qty > 1 {
+                        items.push(format!("{} ×{}", name, qty));
+                    } else {
+                        items.push(name.to_string());
+                    }
+                }
+            }
+        }
+        if items.is_empty() { String::new() } else { items.join(", ") }
+    }
+}
+
 // ── Feature interpretation helpers ───────────────────────────────────────────
+
+impl ClassFeature {
+    /// Returns `true` if `current_level` meets or exceeds this feature's required level.
+    pub fn is_unlocked(&self, current_level: i32) -> bool {
+        current_level >= self.level
+    }
+
+    /// Render all entries into a flat plain-text description suitable for the
+    /// Ctrl+K detail modal.
+    pub fn description_text(&self) -> String {
+        match &self.entries {
+            Some(arr) => json_array_to_text(arr),
+            None => String::new(),
+        }
+    }
+
+    /// How many interactive choice slots this feature exposes at character creation.
+    /// Returns 0 for static features that need no player input.
+    pub fn slot_count(&self) -> usize {
+        match self.interpret() {
+            crate::models::features::Feature::WeaponMastery { choose } => choose as usize,
+            crate::models::features::Feature::Asi { .. } => 0, // handled by abilities step
+            crate::models::features::Feature::SkillChoice { choose } => choose as usize,
+            crate::models::features::Feature::GrantsOriginFeat { choose } => choose as usize,
+            crate::models::features::Feature::Choice { choose, .. } => choose as usize,
+            crate::models::features::Feature::Spells { choose, .. } => choose as usize,
+            _ => 0,
+        }
+    }
+
+    /// A short label for what kind of thing gets picked in each slot.
+    /// Used as the modal title prefix.
+    pub fn choice_kind(&self) -> &'static str {
+        match self.interpret() {
+            crate::models::features::Feature::WeaponMastery { .. } => "Weapon Mastery",
+            crate::models::features::Feature::SkillChoice { .. } => "Skill",
+            crate::models::features::Feature::GrantsOriginFeat { .. } => "Origin Feat",
+            crate::models::features::Feature::Choice { .. } => "Choice",
+            crate::models::features::Feature::Spells { .. } => "Spell",
+            _ => "Option",
+        }
+    }
+}
 
 impl Feat {
     /// Interpret this feat's description text into a structured [`Feature`].

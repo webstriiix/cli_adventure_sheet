@@ -1,16 +1,14 @@
-use std::collections::HashMap;
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use ratatui::Frame;
-use uuid::Uuid;
+use std::collections::HashMap;
 
 use crate::client::ApiClient;
 use crate::models::{
-    app_state::{
-        ActionsSubTab, AuthMode, BuilderState, EditSection, MulticlassSection, PickerMode, Screen,
-        SheetTab, CharacterCreationStep,
-    },
+    app_state::{BuilderState, CharacterCreationStep, Screen},
     character::{Character, CharacterClass, CharacterFeat, CharacterSpell, InventoryItem},
-    compendium::{Background, Class, ClassDetailResponse, ClassFeature, Feat, Item, Race, Spell, SubclassFeature, Subrace},
+    compendium::{
+        Background, Class, ClassFeature, Feat, Item, Race, Spell, SubclassFeature, Subrace,
+    },
 };
 use crate::ui;
 use crate::utils::storage::StorageManager;
@@ -257,7 +255,15 @@ impl App {
         });
 
         match core {
-            (Ok(classes), Ok(races), Ok(backgrounds), Ok(spells), Ok(items), Ok(feats), Ok(subraces)) => {
+            (
+                Ok(classes),
+                Ok(races),
+                Ok(backgrounds),
+                Ok(spells),
+                Ok(items),
+                Ok(feats),
+                Ok(subraces),
+            ) => {
                 self.classes = classes.clone();
                 self.races = races.clone();
                 self.backgrounds = backgrounds.clone();
@@ -344,6 +350,7 @@ impl App {
 
     pub fn handle_event(&mut self, event: Event) {
         if let Event::Key(key) = event {
+            tracing::debug!("Input event: {key:?}");
             if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                 self.should_quit = true;
                 return;
@@ -378,7 +385,7 @@ impl App {
                     .split('|')
                     .next()
                     .unwrap_or("");
-                
+
                 // Helper to extract AC value from JSON
                 let extract_ac = |val: &serde_json::Value| -> i32 {
                     if let Some(n) = val.as_i64() {
@@ -465,9 +472,12 @@ impl App {
                         if !props.is_empty() {
                             desc.push_str("\n\nProperties:\n");
                             for prop in props {
-                                let code = crate::utils::weapon_properties::parse_property_code(prop);
-                                let prop_name = crate::utils::weapon_properties::property_name(code);
-                                let prop_desc = crate::utils::weapon_properties::property_description(code);
+                                let code =
+                                    crate::utils::weapon_properties::parse_property_code(prop);
+                                let prop_name =
+                                    crate::utils::weapon_properties::property_name(code);
+                                let prop_desc =
+                                    crate::utils::weapon_properties::property_description(code);
                                 desc.push_str(&format!("{}. {}\n", prop_name, prop_desc));
                             }
                         }
@@ -477,11 +487,14 @@ impl App {
                     let mut mastery_details = Vec::new();
                     if let Some(masteries) = &item.mastery {
                         for mastery in masteries {
-                            let code = crate::utils::weapon_properties::parse_property_code(mastery);
+                            let code =
+                                crate::utils::weapon_properties::parse_property_code(mastery);
                             let mut name = crate::utils::weapon_mastery::get_mastery_property(code);
-                            let mut desc_text = crate::utils::weapon_mastery::get_mastery_description(name);
+                            let mut desc_text =
+                                crate::utils::weapon_mastery::get_mastery_description(name);
                             if name == "—" {
-                                let desc_direct = crate::utils::weapon_mastery::get_mastery_description(code);
+                                let desc_direct =
+                                    crate::utils::weapon_mastery::get_mastery_description(code);
                                 if desc_direct != "No description available." {
                                     name = code;
                                     desc_text = desc_direct;
@@ -580,7 +593,13 @@ impl App {
                 r.channel_divinity_uses
             } else {
                 // Fallback: level-based logic (class_table extraction is unreliable with 5etools format)
-                Some(if level >= 18 { 3 } else if level >= 7 { 2 } else { 1 })
+                Some(if level >= 18 {
+                    3
+                } else if level >= 7 {
+                    2
+                } else {
+                    1
+                })
             };
 
             if let Some(max) = cd_max {
@@ -590,7 +609,9 @@ impl App {
                     .find(|f| f.name.eq_ignore_ascii_case("channel divinity"))
                     .and_then(|f| f.entries.as_ref())
                     .map(|e| crate::models::compendium::json_array_to_text(e))
-                    .unwrap_or_else(|| "You can use your Channel Divinity to create various effects.".into());
+                    .unwrap_or_else(|| {
+                        "You can use your Channel Divinity to create various effects.".into()
+                    });
 
                 derived.push(crate::models::actions::ActionEntry {
                     name: "Channel Divinity".into(),
@@ -865,16 +886,20 @@ impl App {
                     match rt.block_on(self.client.add_spell(cid, &req)) {
                         Ok(cs) => self.char_spells.push(cs),
                         Err(_) => {
-                            self.char_spells.push(crate::models::character::CharacterSpell {
-                                character_id: cid,
-                                spell_id: *spell_id,
-                                is_prepared: true,
-                            });
+                            self.char_spells
+                                .push(crate::models::character::CharacterSpell {
+                                    character_id: cid,
+                                    spell_id: *spell_id,
+                                    is_prepared: true,
+                                });
                         }
                     }
                 }
                 self.spell_sources.insert(*spell_id, source_name.clone());
-            } else if let Some(cs) = self.char_spells.iter_mut().find(|cs| cs.spell_id == *spell_id)
+            } else if let Some(cs) = self
+                .char_spells
+                .iter_mut()
+                .find(|cs| cs.spell_id == *spell_id)
             {
                 cs.is_prepared = true;
                 self.spell_sources.insert(*spell_id, source_name.clone());
@@ -933,9 +958,10 @@ impl App {
                             None => continue,
                         };
                         let spell_name = raw_name.split('|').next().unwrap_or(raw_name).trim();
-                        if let Some(spell) = all_spells.iter().find(|s| {
-                            s.name.eq_ignore_ascii_case(spell_name)
-                        }) {
+                        if let Some(spell) = all_spells
+                            .iter()
+                            .find(|s| s.name.eq_ignore_ascii_case(spell_name))
+                        {
                             if !out.iter().any(|(id, _)| *id == spell.id) {
                                 out.push((spell.id, source_name.to_string()));
                             }
@@ -960,7 +986,8 @@ impl App {
             let name_lower = feature.name.to_lowercase();
 
             // Skip features that don't grant spells (e.g. flavor text, abilities)
-            if !name_lower.contains("spells") && !name_lower.contains("domain")
+            if !name_lower.contains("spells")
+                && !name_lower.contains("domain")
                 && !name_lower.contains("circle")
             {
                 continue;
@@ -1010,12 +1037,11 @@ impl App {
                                         let spells_val = &arr[1];
                                         let spells_s = match spells_val {
                                             serde_json::Value::String(s) => s.clone(),
-                                            serde_json::Value::Array(a) => {
-                                                a.iter()
-                                                    .filter_map(|v| v.as_str())
-                                                    .collect::<Vec<_>>()
-                                                    .join("•")
-                                            }
+                                            serde_json::Value::Array(a) => a
+                                                .iter()
+                                                .filter_map(|v| v.as_str())
+                                                .collect::<Vec<_>>()
+                                                .join("•"),
                                             _ => String::new(),
                                         };
                                         if !level_s.is_empty() && !spells_s.is_empty() {
@@ -1059,17 +1085,16 @@ impl App {
             if spell_name.is_empty() {
                 continue;
             }
-            if let Some(spell) = all_spells.iter().find(|s| {
-                s.name.eq_ignore_ascii_case(spell_name)
-            }) {
+            if let Some(spell) = all_spells
+                .iter()
+                .find(|s| s.name.eq_ignore_ascii_case(spell_name))
+            {
                 if !out.iter().any(|(id, _)| *id == spell.id) {
                     out.push((spell.id, source_name.to_string()));
                 }
             }
         }
     }
-
-
 
     pub fn always_prepared_spell_ids(&self) -> Vec<i32> {
         self.spell_sources
@@ -1148,7 +1173,10 @@ impl App {
             }
             Some(prof) => {
                 // Delete (back to None)
-                if rt.block_on(self.client.delete_proficiency(char_id, prof.id)).is_ok() {
+                if rt
+                    .block_on(self.client.delete_proficiency(char_id, prof.id))
+                    .is_ok()
+                {
                     self.char_proficiencies.retain(|p| p.id != prof.id);
                 }
             }
@@ -1162,7 +1190,9 @@ impl App {
         if let Some(ref mut actions) = self.char_actions {
             for la in derived {
                 if la.max_uses.is_some() {
-                    if let Some(existing) = actions.limited_use.iter_mut().find(|a| a.name == la.name) {
+                    if let Some(existing) =
+                        actions.limited_use.iter_mut().find(|a| a.name == la.name)
+                    {
                         existing.max_uses = la.max_uses;
                         existing.description = la.description.clone();
                     } else {
@@ -1224,9 +1254,12 @@ impl App {
         let client = self.client.clone();
         let draft_id = self.builder.draft_id;
 
-        let class_id = self.builder.class_id.unwrap_or_else(|| {
-            self.classes.first().map(|c| c.id).unwrap_or(1)
-        });
+        let class_id = self
+            .builder
+            .class_id
+            .unwrap_or_else(|| self.classes.first().map(|c| c.id).unwrap_or(1));
+
+        let n = draft.current_step;
 
         if !self.is_online() {
             self.status_msg = "Offline! Cannot save draft to server.".to_string();
@@ -1244,28 +1277,45 @@ impl App {
                 wisdom: self.builder.abilities[4],
                 charisma: self.builder.abilities[5],
                 max_hp: 10,
-            // Ensure required runtime fields are present for server validation
-            current_hp: Some(10),
-            temp_hp: Some(0),
-            inspiration: Some(false),
-            notes: Some(draft_json.clone()),
-            // Server expects experience_pts present for PUT — use 0 for drafts
-            experience_pts: Some(0),
-            ..Default::default()
+                // Ensure required runtime fields are present for server validation
+                current_hp: Some(10),
+                temp_hp: Some(0),
+                inspiration: Some(false),
+                notes: Some(draft_json.clone()),
+                // Server expects experience_pts present for PUT — use 0 for drafts
+                experience_pts: Some(0),
+                ..Default::default()
             };
             // Log payload for debugging
             if let Ok(payload) = serde_json::to_string_pretty(&req) {
-                let _ = std::fs::OpenOptions::new().create(true).append(true).open("draft_payload.log").and_then(|mut f| {
-                    use std::io::Write;
-                    writeln!(f, "UPDATE /characters/{} => {}\n", id, payload)
-                });
+                let _ = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("draft_payload.log")
+                    .and_then(|mut f| {
+                        use std::io::Write;
+                        writeln!(f, "UPDATE /characters/{} => {}\n", id, payload)
+                    });
             }
+            tracing::info!("Attempting sync for Step {n}...");
             match rt.block_on(client.update_character(id, &req)) {
                 Ok(_) => {
+                    tracing::info!("Sync Successful for Character {id}");
                     self.status_msg = "Draft auto-saved.".to_string();
                     true
                 }
                 Err(e) => {
+                    let (status_code, error_text) = match &e {
+                        crate::client::ApiError::Api { status, message } => {
+                            (*status, message.clone())
+                        }
+                        crate::client::ApiError::Request(err) => (
+                            err.status().map(|s| s.as_u16()).unwrap_or(0),
+                            err.to_string(),
+                        ),
+                        crate::client::ApiError::Parse(err) => (0, err.clone()),
+                    };
+                    tracing::error!("Sync Failed: {status_code} - {error_text}");
                     self.status_msg = format!("Failed to auto-save draft: {e}");
                     false
                 }
@@ -1289,13 +1339,19 @@ impl App {
             };
             // Log create payload for debugging
             if let Ok(payload) = serde_json::to_string_pretty(&req) {
-                let _ = std::fs::OpenOptions::new().create(true).append(true).open("draft_payload.log").and_then(|mut f| {
-                    use std::io::Write;
-                    writeln!(f, "CREATE /characters => {}\n", payload)
-                });
+                let _ = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("draft_payload.log")
+                    .and_then(|mut f| {
+                        use std::io::Write;
+                        writeln!(f, "CREATE /characters => {}\n", payload)
+                    });
             }
+            tracing::info!("Attempting sync for Step {n}...");
             match rt.block_on(client.create_character(&req)) {
                 Ok(character) => {
+                    tracing::info!("Sync Successful for Character {}", character.id);
                     self.builder.draft_id = Some(character.id);
                     let update_req = crate::models::UpdateCharacterRequest {
                         name: character.name.clone(),
@@ -1318,16 +1374,31 @@ impl App {
                     };
                     // Log update payload for debugging
                     if let Ok(payload) = serde_json::to_string_pretty(&update_req) {
-                        let _ = std::fs::OpenOptions::new().create(true).append(true).open("draft_payload.log").and_then(|mut f| {
-                            use std::io::Write;
-                            writeln!(f, "UPDATE /characters/{} => {}\n", character.id, payload)
-                        });
+                        let _ = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open("draft_payload.log")
+                            .and_then(|mut f| {
+                                use std::io::Write;
+                                writeln!(f, "UPDATE /characters/{} => {}\n", character.id, payload)
+                            });
                     }
                     let _ = rt.block_on(client.update_character(character.id, &update_req));
                     self.status_msg = "Draft created and saved.".to_string();
                     true
                 }
                 Err(e) => {
+                    let (status_code, error_text) = match &e {
+                        crate::client::ApiError::Api { status, message } => {
+                            (*status, message.clone())
+                        }
+                        crate::client::ApiError::Request(err) => (
+                            err.status().map(|s| s.as_u16()).unwrap_or(0),
+                            err.to_string(),
+                        ),
+                        crate::client::ApiError::Parse(err) => (0, err.clone()),
+                    };
+                    tracing::error!("Sync Failed: {status_code} - {error_text}");
                     self.status_msg = format!("Failed to create draft: {e}");
                     false
                 }

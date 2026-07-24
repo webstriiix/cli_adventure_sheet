@@ -9,10 +9,10 @@ pub mod rules;
 pub use auth::{AuthResponse, LoginRequest, SignupRequest};
 pub use character::{
     AddCharacterClassRequest, AddInventoryRequest, AddProficiencyRequest, AddSpellRequest,
-    AsiChoiceRequest, Character, CharacterClassResponse, CharacterFeat, CharacterHitDice, CharacterProficiency,
-    CharacterSpell, CharacterSpellSlot, CreateCharacterRequest, CharacterDraft,
-    InventoryItem, PatchCharacterClassRequest, PatchProficiencyRequest,
-    UpdateCharacterRequest, UpdateInventoryRequest, UpdateSpellRequest,
+    AsiChoiceRequest, Character, CharacterClassResponse, CharacterDraft, CharacterFeat, CharacterHitDice,
+    CharacterProficiency, CharacterSpell, CharacterSpellSlot, CreateCharacterRequest, DecisionPoint,
+    DecisionStatus, InventoryItem, PatchCharacterClassRequest, PatchProficiencyRequest,
+    ProgressionManifest, UpdateCharacterRequest, UpdateInventoryRequest, UpdateSpellRequest,
 };
 pub use compendium::{
     Background, Class, ClassDetailResponse, ClassResourceResponse, Feat, Item, Race, Spell, Subrace,

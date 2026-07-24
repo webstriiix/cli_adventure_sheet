@@ -203,6 +203,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
             }
 
             if !app.save_draft() { return; }
+            // Populate equipment options so Step 5 has data to display
+            app.populate_equipment_options();
+            // Reset selection state for the equipment step
+            app.builder.equipment_option = None;
+            app.builder.focus_index = 0;
             app.builder.step = CharacterCreationStep::Equipment;
             app.builder.list_state.select(Some(0));
             app.status_msg.clear();

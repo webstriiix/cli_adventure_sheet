@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 
 use crate::app::App;
@@ -78,6 +78,12 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         render_subclass_modal(app, frame, area);
     } else if app.builder.show_feat_modal {
         render_feat_modal(app, frame, area);
+    } else if app.builder.show_progression_asi_modal {
+        render_progression_asi_modal(app, frame, area);
+    } else if app.builder.show_progression_wm_modal {
+        render_progression_wm_modal(app, frame, area);
+    } else if app.builder.feature_detail_modal.is_some() {
+        render_feature_detail_modal(app, frame, area);
     }
 
     // Footer
@@ -85,10 +91,16 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         "↑↓ select subclass   Enter confirm   Esc close"
     } else if app.builder.show_feat_modal {
         "↑↓ select feat   Enter confirm   Esc close"
+    } else if app.builder.show_progression_asi_modal {
+        "↑↓ select ASI option   Enter submit   Esc close"
+    } else if app.builder.show_progression_wm_modal {
+        "↑↓ select weapon   Enter confirm   Esc close"
+    } else if app.builder.feature_detail_modal.is_some() {
+        "Esc / Enter close modal   ↑↓ scroll"
     } else {
         match app.builder.step {
             CharacterCreationStep::Class =>
-                "↑↓ select class   +/- change level   Enter proceed   Esc back",
+                "←→ switch pane   ↑↓/JK navigate   +/- level   Enter select slot   Ctrl+K detail   Tab proceed",
             CharacterCreationStep::Background =>
                 "Tab navigate fields   ↑↓ select background   F feat   Enter proceed   Esc back",
             CharacterCreationStep::Species =>
@@ -117,6 +129,18 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     }
     if app.builder.show_feat_modal {
         handle_feat_modal_key(app, key);
+        return;
+    }
+    if app.builder.show_progression_asi_modal {
+        handle_progression_asi_modal_key(app, key);
+        return;
+    }
+    if app.builder.show_progression_wm_modal {
+        handle_progression_wm_modal_key(app, key);
+        return;
+    }
+    if app.builder.feature_detail_modal.is_some() {
+        handle_feature_detail_modal_key(app, key);
         return;
     }
 
@@ -198,6 +222,7 @@ fn handle_subclass_modal_key(app: &mut App, key: KeyEvent) {
             if let Some(sc) = subclasses.get(selected) {
                 app.builder.subclass_id = Some(sc.id);
                 app.status_msg = format!("Subclass '{}' selected.", sc.name);
+                step_class::refresh_progression_manifest(app);
             }
             app.builder.show_subclass_modal = false;
         }
@@ -275,6 +300,223 @@ fn handle_feat_modal_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char(c) => {
             app.builder.feat_picker_search.push(c);
             app.builder.feat_list_state.select(Some(0));
+        }
+        _ => {}
+    }
+}
+
+// ── Progression ASI Modal ──
+
+fn asi_options() -> Vec<(&'static str, [i32; 6])> {
+    vec![
+        ("+2 Strength", [2, 0, 0, 0, 0, 0]),
+        ("+2 Dexterity", [0, 2, 0, 0, 0, 0]),
+        ("+2 Constitution", [0, 0, 2, 0, 0, 0]),
+        ("+2 Intelligence", [0, 0, 0, 2, 0, 0]),
+        ("+2 Wisdom", [0, 0, 0, 0, 2, 0]),
+        ("+2 Charisma", [0, 0, 0, 0, 0, 2]),
+        ("+1 Strength, +1 Constitution", [1, 0, 1, 0, 0, 0]),
+        ("+1 Dexterity, +1 Constitution", [0, 1, 1, 0, 0, 0]),
+        ("+1 Intelligence, +1 Wisdom", [0, 0, 0, 1, 1, 0]),
+    ]
+}
+
+fn render_progression_asi_modal(app: &mut App, frame: &mut Frame, area: Rect) {
+    let popup_area = centered_popup(area, 60, 15);
+    frame.render_widget(Clear, popup_area);
+
+    let opts = asi_options();
+    let lvl = app.builder.progression_slot_level.unwrap_or(4);
+
+    let items: Vec<ListItem> = opts
+        .iter()
+        .map(|(label, _)| ListItem::new(Line::from(Span::raw(format!("  {}", label)))))
+        .collect();
+
+    let title = format!(" Choose Ability Score Improvement (Level {}) ", lvl);
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Yellow)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(">> ");
+
+    frame.render_stateful_widget(list, popup_area, &mut app.builder.feat_list_state);
+}
+
+fn handle_progression_asi_modal_key(app: &mut App, key: KeyEvent) {
+    let opts = asi_options();
+    match key.code {
+        KeyCode::Esc => {
+            app.builder.show_progression_asi_modal = false;
+        }
+        KeyCode::Up => {
+            let cur = app.builder.feat_list_state.selected().unwrap_or(0);
+            let next = if cur > 0 { cur - 1 } else { opts.len() - 1 };
+            app.builder.feat_list_state.select(Some(next));
+        }
+        KeyCode::Down => {
+            let cur = app.builder.feat_list_state.selected().unwrap_or(0);
+            let next = if cur + 1 < opts.len() { cur + 1 } else { 0 };
+            app.builder.feat_list_state.select(Some(next));
+        }
+        KeyCode::Enter => {
+            let selected = app.builder.feat_list_state.selected().unwrap_or(0);
+            if let Some((label, bumps)) = opts.get(selected) {
+                let char_id = app
+                    .builder
+                    .draft_id
+                    .or_else(|| app.active_character.as_ref().map(|c| c.id));
+
+                if let Some(id) = char_id {
+                    let req = crate::models::AsiChoiceRequest {
+                        bump_str: Some(bumps[0]),
+                        bump_dex: Some(bumps[1]),
+                        bump_con: Some(bumps[2]),
+                        bump_int: Some(bumps[3]),
+                        bump_wis: Some(bumps[4]),
+                        bump_cha: Some(bumps[5]),
+                        feat_id: None,
+                        source_type: Some("level".to_string()),
+                    };
+
+                    let rt = app.rt.clone();
+                    let client = app.client.clone();
+                    match rt.block_on(client.post_asi_choice(id, &req)) {
+                        Ok(_) => {
+                            app.status_msg = format!("ASI Choice '{}' saved!", label);
+                            step_class::refresh_progression_manifest(app);
+                        }
+                        Err(e) => {
+                            app.status_msg = format!("Failed to submit ASI choice: {}", e);
+                        }
+                    }
+                } else {
+                    app.status_msg = format!("ASI Choice '{}' selected locally.", label);
+                }
+            }
+            app.builder.show_progression_asi_modal = false;
+        }
+        _ => {}
+    }
+}
+
+// ── Weapon Mastery Modal ──
+
+fn render_progression_wm_modal(app: &mut App, frame: &mut Frame, area: Rect) {
+    let popup_area = centered_popup(area, 65, 16);
+    frame.render_widget(Clear, popup_area);
+
+    let weapons = app.filtered_mastery_weapons();
+    let lvl = app.builder.progression_slot_level.unwrap_or(1);
+
+    let items: Vec<ListItem> = weapons
+        .iter()
+        .map(|w| {
+            let mastery_prop = crate::utils::weapon_mastery::get_mastery_property(&w.name);
+            ListItem::new(Line::from(vec![
+                Span::styled(w.name.clone(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("  [{}]", mastery_prop), Style::default().fg(Color::Cyan)),
+            ]))
+        })
+        .collect();
+
+    let title = format!(" Choose Weapon Mastery (Level {}) ", lvl);
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Cyan)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(">> ");
+
+    frame.render_stateful_widget(list, popup_area, &mut app.builder.feat_list_state);
+}
+
+fn handle_progression_wm_modal_key(app: &mut App, key: KeyEvent) {
+    let weapons = app.filtered_mastery_weapons();
+    if weapons.is_empty() {
+        app.builder.show_progression_wm_modal = false;
+        return;
+    }
+
+    match key.code {
+        KeyCode::Esc => {
+            app.builder.show_progression_wm_modal = false;
+        }
+        KeyCode::Up => {
+            let cur = app.builder.feat_list_state.selected().unwrap_or(0);
+            let next = if cur > 0 { cur - 1 } else { weapons.len() - 1 };
+            app.builder.feat_list_state.select(Some(next));
+        }
+        KeyCode::Down => {
+            let cur = app.builder.feat_list_state.selected().unwrap_or(0);
+            let next = if cur + 1 < weapons.len() { cur + 1 } else { 0 };
+            app.builder.feat_list_state.select(Some(next));
+        }
+        KeyCode::Enter => {
+            let selected = app.builder.feat_list_state.selected().unwrap_or(0);
+            let weapon_name = app.filtered_mastery_weapons().get(selected).map(|w| w.name.clone());
+            if let Some(wname) = weapon_name {
+                if !app.builder.weapon_mastery_choices.contains(&wname) {
+                    app.builder.weapon_mastery_choices.push(wname.clone());
+                }
+                app.status_msg = format!("Weapon Mastery '{}' selected.", wname);
+                step_class::refresh_progression_manifest(app);
+            }
+            app.builder.show_progression_wm_modal = false;
+        }
+        _ => {}
+    }
+}
+
+// ── Feature Detail Modal (Ctrl+K) ──
+
+fn render_feature_detail_modal(app: &mut App, frame: &mut Frame, area: Rect) {
+    if let Some((title, body)) = &app.builder.feature_detail_modal {
+        let popup_area = centered_popup(area, 75, 18);
+        frame.render_widget(Clear, popup_area);
+
+        let p = Paragraph::new(body.as_str())
+            .block(
+                Block::default()
+                    .title(format!(" {} ", title))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            )
+            .wrap(Wrap { trim: true })
+            .scroll((app.builder.feature_modal_scroll, 0));
+
+        frame.render_widget(p, popup_area);
+    }
+}
+
+fn handle_feature_detail_modal_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter => {
+            app.builder.feature_detail_modal = None;
+            app.builder.feature_modal_scroll = 0;
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.builder.feature_modal_scroll = app.builder.feature_modal_scroll.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.builder.feature_modal_scroll = app.builder.feature_modal_scroll.saturating_add(1);
         }
         _ => {}
     }

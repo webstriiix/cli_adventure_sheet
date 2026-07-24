@@ -410,6 +410,7 @@ fn feature_badge(feature: &Feature) -> Option<(&'static str, Color)> {
         Feature::GrantsOriginFeat { .. } => Some(("[Feat]", Color::Cyan)),
         Feature::Choice { .. } => Some(("[Pick]", Color::LightBlue)),
         Feature::GrantsSpell { .. } => Some(("[Spell]", Color::LightBlue)),
+        Feature::Spells { .. } => Some(("[Spell]", Color::LightBlue)),
         Feature::StaticFeat(_) => None,
     }
 }
