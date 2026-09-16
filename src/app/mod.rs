@@ -1214,6 +1214,79 @@ impl App {
         }
     }
 
+    /// Mengumpulkan semua skill proficiency dari berbagai sumber builder,
+    /// mendeteksi duplikat, dan mengembalikan Vec<(skill_name, source_tag, is_duplicate)>.
+    /// source_tag format: "class", "species", "feat", "background".
+    /// is_duplicate = true jika skill ini sudah pernah muncul dari sumber prioritas lebih tinggi.
+    /// Prioritas sumber (tinggi -> rendah): Class > Background > Species > Feat.
+    pub fn aggregate_skill_proficiencies(&self) -> Vec<(String, String, bool)> {
+        let mut result = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // Helper closure
+        let mut add_skills = |skills: Vec<String>, source: &str| {
+            for s in skills {
+                let key = s.to_lowercase();
+                let is_dup = seen.contains(&key);
+                if !is_dup {
+                    seen.insert(key.clone());
+                }
+                result.push((s, source.to_string(), is_dup));
+            }
+        };
+
+        // 1. Class (prioritas tertinggi)
+        add_skills(self.builder.skill_choices.clone(), "class");
+
+        // 2. Background (fixed skills, tidak dipilih user — tetap masuk list)
+        // TODO: implement parse background skills dari bg_id jika ada
+        // if let Some(bg_id) = self.builder.bg_id { ... }
+
+        // 3. Species (Human Skillful, dll)
+        if let Some(ref race_skill) = self.builder.race_skill_choice {
+            add_skills(vec![race_skill.clone()], "species");
+        }
+
+        // 4. Feat Skill
+        add_skills(self.builder.feat_skill_choices.clone(), "feat");
+
+        result
+    }
+
+    /// Kirim skill proficiency ke backend via endpoint /proficiencies.
+    /// Hanya kirim yang `is_duplicate == false` (skill unik).
+    /// Return true jika semua berhasil.
+    pub fn sync_skill_proficiencies_to_backend(&mut self, character_id: uuid::Uuid) -> bool {
+        use crate::models::character::AddProficiencyRequest;
+        let skills = self.aggregate_skill_proficiencies();
+        let rt = self.rt.clone();
+        let client = self.client.clone();
+
+        for (skill, source, is_dup) in skills {
+            if is_dup {
+                tracing::info!(
+                    "Skill '{}' dari '{}' duplikat, di-skip (replacement ditangani UI)",
+                    skill,
+                    source
+                );
+                continue;
+            }
+
+            let req = AddProficiencyRequest {
+                category: "skill".to_string(),
+                name: skill.clone(),
+                proficiency_type: "proficiency".to_string(),
+            };
+
+            if let Err(e) = rt.block_on(client.add_proficiency(character_id, &req)) {
+                tracing::error!("Gagal sync skill '{}': {}", skill, e);
+                self.status_msg = format!("Gagal simpan skill {}: {}", skill, e);
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn is_online(&mut self) -> bool {
         let rt = self.rt.clone();
         let online = rt.block_on(self.client.check_health());
@@ -1404,5 +1477,84 @@ impl App {
                 }
             }
         }
+    }
+}
+
+// ── Unit Tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_app() -> App {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+        App::new(ApiClient::new(), rt.handle().clone())
+    }
+
+    fn set_skills(app: &mut App, class: &[&str], species: Option<&str>, feat: &[&str]) {
+        app.builder.skill_choices = class.iter().map(|s| s.to_string()).collect();
+        app.builder.race_skill_choice = species.map(|s| s.to_string());
+        app.builder.feat_skill_choices = feat.iter().map(|s| s.to_string()).collect();
+    }
+
+    #[test]
+    fn test_merge_class_species_feat_no_duplicate() {
+        let mut app = test_app();
+        set_skills(
+            &mut app,
+            &["Stealth", "Perception"],
+            Some("Insight"),
+            &["Acrobatics"],
+        );
+        let result = app.aggregate_skill_proficiencies();
+        // 4 unik, tidak ada is_duplicate=true
+        assert_eq!(result.len(), 4);
+        assert!(!result.iter().any(|(_, _, dup)| *dup));
+        // Urutan sumber: class dulu, lalu species, lalu feat
+        assert_eq!(result[0].1, "class");
+        assert_eq!(result[1].1, "class");
+        assert_eq!(result[2].1, "species");
+        assert_eq!(result[3].1, "feat");
+    }
+
+    #[test]
+    fn test_merge_duplicate_flag_for_lower_priority_source() {
+        let mut app = test_app();
+        // Stealth dari Class (prioritas tinggi) DAN dari Feat (prioritas rendah)
+        set_skills(&mut app, &["Stealth"], None, &["Stealth"]);
+        let result = app.aggregate_skill_proficiencies();
+        assert_eq!(result.len(), 2);
+        // Yang dari class: bukan duplikat; yang dari feat: duplikat
+        assert!(!result[0].2);
+        assert!(result[1].2);
+        assert_eq!(result[1].0, "Stealth");
+        assert_eq!(result[1].1, "feat");
+    }
+
+    #[test]
+    fn test_merge_duplicate_detection_case_insensitive() {
+        let mut app = test_app();
+        set_skills(&mut app, &["stealth"], None, &["Stealth"]);
+        let result = app.aggregate_skill_proficiencies();
+        assert!(
+            result[1].2,
+            "feat 'Stealth' harus dideteksi duplikat dari class 'stealth'"
+        );
+    }
+
+    #[test]
+    fn test_merge_species_flag_when_class_already_has() {
+        let mut app = test_app();
+        set_skills(&mut app, &["Insight"], Some("Insight"), &[]);
+        let result = app.aggregate_skill_proficiencies();
+        assert!(result[1].2, "species Insight duplikat dari class");
+        assert_eq!(result[1].1, "species");
+    }
+
+    #[test]
+    fn test_merge_empty_builder_returns_empty() {
+        let app = test_app();
+        assert!(app.aggregate_skill_proficiencies().is_empty());
     }
 }

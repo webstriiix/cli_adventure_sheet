@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::models::{app_state::CharacterCreationStep, DecisionStatus};
+use crate::models::{DecisionStatus, app_state::CharacterCreationStep};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
@@ -45,27 +45,7 @@ impl ProgressionRow {
 // ── Manifest refresh ──────────────────────────────────────────────────────────
 
 pub fn refresh_progression_manifest(app: &mut App) {
-    let char_id = app
-        .builder
-        .draft_id
-        .or_else(|| app.active_character.as_ref().map(|c| c.id));
-
-    if let Some(id) = char_id {
-        let rt = app.rt.clone();
-        let client = app.client.clone();
-        // Always overwrite: the manifest must reflect the *current* class+level
-        // combination, not a stale snapshot from a prior class selection.
-        match rt.block_on(client.get_progression_manifest(id)) {
-            Ok(manifest) => {
-                app.builder.progression_manifest = Some(manifest);
-            }
-            Err(e) => {
-                // Don't clobber a good existing manifest on a transient failure;
-                // just log and let the tree continue with synthetic slots.
-                tracing::warn!("Could not fetch progression manifest: {}", e);
-            }
-        }
-    }
+    app.refresh_progression_manifest();
 }
 
 // ── Helper: resolve subclass unlock level ────────────────────────────────────
@@ -115,15 +95,9 @@ fn subclass_unlock_level(app: &App) -> i32 {
 // Used only for dedup-suppression of static class features when a manifest
 // slot already covers the same level+type. Never used to *create* slots.
 
-const ASI_FEATURE_NAMES: &[&str] = &[
-    "ability score improvement",
-    "ability score increase",
-];
+const ASI_FEATURE_NAMES: &[&str] = &["ability score improvement", "ability score increase"];
 
-const WM_FEATURE_NAMES: &[&str] = &[
-    "weapon mastery",
-    "weapon masteries",
-];
+const WM_FEATURE_NAMES: &[&str] = &["weapon mastery", "weapon masteries"];
 
 fn feature_choice_type(name: &str) -> Option<&'static str> {
     let lower = name.to_lowercase();
@@ -164,6 +138,36 @@ fn canonical_asi_levels(class_name: &str) -> &'static [i32] {
     } else {
         &[4, 8, 12, 16, 19] // all other classes (Wizard, Paladin, Tamer, etc.)
     }
+}
+
+// ── Skill-choice parser ───────────────────────────────────────────────────────
+// Returns (count_to_choose, allowed_skill_names) from the class skill_choices JSON.
+// The JSON shape is: [{ "choose": 2, "from": ["arcana", "history", ...] }]
+pub fn parse_skill_choices_pub(class: &crate::models::Class) -> (usize, Vec<String>) {
+    parse_skill_choices(class)
+}
+
+fn parse_skill_choices(class: &crate::models::Class) -> (usize, Vec<String>) {
+    let arr = match class.skill_choices.as_array() {
+        Some(a) if !a.is_empty() => a,
+        _ => return (0, Vec::new()),
+    };
+    let entry = &arr[0]; // classes have one skill-choice block
+    let choose = entry.get("choose").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let from: Vec<String> = entry
+        .get("from")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    v.as_str()
+                        .or_else(|| v.get("name").and_then(|n| n.as_str()))
+                        .map(|s| title_case(s))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    (choose, from)
 }
 
 // ── Core build function ───────────────────────────────────────────────────────
@@ -214,10 +218,8 @@ pub fn build_progression_rows(app: &App, class: &crate::models::Class) -> Vec<Pr
     let manifest = app.builder.progression_manifest.as_ref();
 
     // Pre-group manifest decision_points by level for O(1) per-level access.
-    let mut manifest_by_level: std::collections::HashMap<
-        i32,
-        Vec<&crate::models::DecisionPoint>,
-    > = std::collections::HashMap::new();
+    let mut manifest_by_level: std::collections::HashMap<i32, Vec<&crate::models::DecisionPoint>> =
+        std::collections::HashMap::new();
     if let Some(m) = manifest {
         for dp in &m.decision_points {
             manifest_by_level.entry(dp.level).or_default().push(dp);
@@ -321,6 +323,30 @@ pub fn build_progression_rows(app: &App, class: &crate::models::Class) -> Vec<Pr
             });
         }
 
+        // ── Skill proficiency slots at Level 1 ───────────────────────────────
+        // Injected for every class that has skill_choices. The count and
+        // allowed list come from the class JSON; choices already made are in
+        // app.builder.skill_choices. Slots beyond what the character has
+        // chosen show as Pending; filled ones show as Complete.
+        if lvl == 1 {
+            let (choose, _from) = parse_skill_choices(class);
+            for slot in 0..choose {
+                let chosen = app.builder.skill_choices.get(slot).cloned();
+                let (status, descs, cur) = match chosen {
+                    Some(skill) => (DecisionStatus::Complete, vec![skill], 1),
+                    None => (DecisionStatus::Pending, vec![], 0),
+                };
+                rows.push(ProgressionRow::DecisionSlot {
+                    level: 1,
+                    choice_type: format!("skill_proficiency:{}", slot),
+                    status,
+                    required_count: 1,
+                    current_count: cur,
+                    descriptions: descs,
+                });
+            }
+        }
+
         // ── Subclass decision slot ────────────────────────────────────────────
         if lvl == unlock_lvl {
             let sc_name = app.builder.subclass_id.and_then(|id| {
@@ -346,30 +372,95 @@ pub fn build_progression_rows(app: &App, class: &crate::models::Class) -> Vec<Pr
         // ── Source C (authoritative): manifest decision_points ────────────────
         if let Some(dps) = manifest_by_level.get(&lvl) {
             for dp in dps.iter() {
-                let descs: Vec<String> = dp
-                    .current_choices
-                    .iter()
-                    .map(|c| c.description.clone())
-                    .collect();
+                let (status, descs) = if dp.choice_type == "asi"
+                    && (dp.status == DecisionStatus::Pending || dp.current_choices.is_empty())
+                {
+                    if let Some(choice) = app.builder.asi_choices.get(&lvl) {
+                        (DecisionStatus::Complete, vec![choice.clone()])
+                    } else {
+                        (
+                            dp.status,
+                            dp.current_choices
+                                .iter()
+                                .map(|c| c.description.clone())
+                                .collect(),
+                        )
+                    }
+                } else if dp.choice_type == "weapon_mastery"
+                    && (dp.status == DecisionStatus::Pending || dp.current_choices.is_empty())
+                {
+                    if !app.builder.weapon_mastery_choices.is_empty() {
+                        (
+                            DecisionStatus::Complete,
+                            app.builder.weapon_mastery_choices.clone(),
+                        )
+                    } else {
+                        (
+                            dp.status,
+                            dp.current_choices
+                                .iter()
+                                .map(|c| c.description.clone())
+                                .collect(),
+                        )
+                    }
+                } else {
+                    (
+                        dp.status,
+                        dp.current_choices
+                            .iter()
+                            .map(|c| c.description.clone())
+                            .collect(),
+                    )
+                };
+
+                let cur_count = if status == DecisionStatus::Complete
+                    && descs.len() > dp.current_choices.len()
+                {
+                    descs.len() as i32
+                } else {
+                    dp.current_choices.len() as i32
+                };
+
                 rows.push(ProgressionRow::DecisionSlot {
                     level: lvl,
                     choice_type: dp.choice_type.clone(),
-                    status: dp.status,
+                    status,
                     required_count: dp.required_count,
-                    current_count: dp.current_choices.len() as i32,
+                    current_count: cur_count,
                     descriptions: descs,
                 });
             }
         } else if manifest.is_none() {
             // ── Synthetic fallback ────────────────────────────────────────────
             for (_, ct) in synthetic_slots.iter().filter(|(l, _)| *l == lvl) {
+                let (status, descs, cur) = match *ct {
+                    "asi" => {
+                        if let Some(choice) = app.builder.asi_choices.get(&lvl) {
+                            (DecisionStatus::Complete, vec![choice.clone()], 1)
+                        } else {
+                            (DecisionStatus::Pending, vec![], 0)
+                        }
+                    }
+                    "weapon_mastery" => {
+                        if !app.builder.weapon_mastery_choices.is_empty() {
+                            (
+                                DecisionStatus::Complete,
+                                app.builder.weapon_mastery_choices.clone(),
+                                app.builder.weapon_mastery_choices.len() as i32,
+                            )
+                        } else {
+                            (DecisionStatus::Pending, vec![], 0)
+                        }
+                    }
+                    _ => (DecisionStatus::Pending, vec![], 0),
+                };
                 rows.push(ProgressionRow::DecisionSlot {
                     level: lvl,
                     choice_type: ct.to_string(),
-                    status: DecisionStatus::Pending,
+                    status,
                     required_count: 1,
-                    current_count: 0,
-                    descriptions: vec![],
+                    current_count: cur,
+                    descriptions: descs,
                 });
             }
         }
@@ -406,7 +497,9 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
 
     // Search bar
     let search_border = if focus_left {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     };
@@ -436,7 +529,9 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
         .collect();
 
     let list_border_style = if focus_left {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     };
@@ -452,7 +547,9 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
             .map(|(_, c)| {
                 let is_selected = Some(c.id) == app.builder.class_id;
                 let style = if is_selected {
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::White)
                 };
@@ -486,7 +583,12 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
     let filtered_len = filtered_classes.len();
     if filtered_len == 0 {
         app.builder.list_state.select(None);
-    } else if app.builder.list_state.selected().map_or(true, |i| i >= filtered_len) {
+    } else if app
+        .builder
+        .list_state
+        .selected()
+        .map_or(true, |i| i >= filtered_len)
+    {
         app.builder.list_state.select(Some(0));
     }
 
@@ -507,7 +609,7 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
             .and_then(|i| filtered.get(i).map(|c| (*c).clone()))
     };
     let right = Layout::vertical([
-        Constraint::Length(5), // Core Traits Panel
+        Constraint::Length(7), // Core Traits Panel
         Constraint::Length(3), // Level / subclass header
         Constraint::Min(0),    // Progression Tree
     ])
@@ -549,10 +651,7 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            "  (-/+ to change)",
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled("  (-/+ to change)", Style::default().fg(Color::DarkGray)),
         Span::styled(subclass_indicator, Style::default().fg(Color::Cyan)),
     ]))
     .block(
@@ -576,24 +675,17 @@ fn render_core_traits_panel(
     area: Rect,
     class: &crate::models::Class,
 ) {
-    // Retrieve extra class detail only if it's already loaded; we never block here
     let detail_loaded = app.class_detail.as_ref().map(|d| d.class.id) == Some(class.id);
-    let tool_profs: String = if detail_loaded {
-        // Class model doesn't carry tool_proficiencies as a field, so we parse from features
-        // (a common source is "Thieves' Tools" in Rogue features, etc.)
-        // For now we mark as "—" unless the class JSON carries it; callers can extend this.
-        "—".to_string()
-    } else {
-        "Loading…".to_string()
-    };
 
-    // ── Left column data ──
-    let hit_die = format!("d{}", class.hit_die);
-    let primary_ability = class
-        .spellcasting_ability
-        .as_deref()
-        .map(|s| title_case(s))
-        .unwrap_or_else(|| "—".to_string());
+    // ── Derived data ──────────────────────────────────────────────────────────
+    let die = class.hit_die;
+    // D&D 2024: HP at Level 1 = max hit die + Con modifier
+    let hp_lvl1 = format!("{} + Con modifier", die);
+    // HP at Higher Levels: roll (or take average) + Con modifier
+    // Average = floor(die/2) + 1  (e.g. d8 → 5, d10 → 6, d12 → 7)
+    let hp_avg = (die / 2) + 1;
+    let hp_higher = format!("1d{} (or {}) + Con modifier", die, hp_avg);
+
     let saves = class
         .proficiency_saves
         .as_deref()
@@ -605,13 +697,13 @@ fn render_core_traits_panel(
         })
         .unwrap_or_else(|| "—".to_string());
 
-    // ── Right column data ──
     let armor = class
         .armor_proficiencies
         .as_deref()
         .map(|v| v.join(", "))
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "—".to_string());
+
     let weapons = class
         .weapon_proficiencies
         .as_deref()
@@ -619,57 +711,125 @@ fn render_core_traits_panel(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "—".to_string());
 
-    // ── Outer block ──
+    let primary = class
+        .spellcasting_ability
+        .as_deref()
+        .map(|s| title_case(s))
+        .unwrap_or_else(|| "—".to_string());
+
+    // ── Skills summary: "Choose 2 from: Arcana, History, …" ─────────────────
+    // Parse the raw from-list so we can display "Choose X from: A, B, C…"
+    // even before class details load (basic class data has skill_choices).
+    let skills_summary: String = {
+        let (choose, from) = parse_skill_choices(class);
+        if choose == 0 {
+            if detail_loaded {
+                "None".to_string()
+            } else {
+                "Loading…".to_string()
+            }
+        } else if from.is_empty() {
+            format!("Choose {}", choose)
+        } else {
+            format!("Choose {} from: {}", choose, from.join(", "))
+        }
+    };
+
+    // ── Equipment hint ────────────────────────────────────────────────────────
+    let equip_hint = if detail_loaded {
+        "Choose (A) Bundle  or  (B) Gold".to_string()
+    } else {
+        "Loading…".to_string()
+    };
+
+    // ── Outer block ──────────────────────────────────────────────────────────
     let outer_block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" {} — Class Traits ", class.name))
         .border_style(Style::default().fg(Color::DarkGray));
-
     let inner = outer_block.inner(area);
     frame.render_widget(outer_block, area);
 
-    // ── Split inner into two columns ──
+    // ── Two columns ──────────────────────────────────────────────────────────
+    // Left: HP + Saves + Spellcasting + Skills
+    // Right: Armor + Weapons + Equipment
     let cols =
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(inner);
+        Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)]).split(inner);
 
-    // Left column
+    // Maximum usable width per column (subtract label prefix chars)
+    let lw = cols[0].width.saturating_sub(13) as usize;
+    let rw = cols[1].width.saturating_sub(11) as usize;
+
+    // ── Left column ───────────────────────────────────────────────────────────
+    // Line 1: HP at Level 1
+    // Line 2: HP at Higher Levels
+    // Line 3: Saving Throws
+    // Line 4: Spellcasting ability (or blank if none)
+    // Line 5: Skills summary (truncated to fit)
     let left_text = vec![
         Line::from(vec![
-            Span::styled("Hit Die:  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("HP  Lvl 1: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                hit_die,
+                hp_lvl1,
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
-            Span::styled("Primary:  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(primary_ability, Style::default().fg(Color::Cyan)),
+            Span::styled("HP Higher: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(hp_higher, Style::default().fg(Color::Yellow)),
         ]),
         Line::from(vec![
-            Span::styled("Saves:    ", Style::default().fg(Color::DarkGray)),
-            Span::styled(saves, Style::default().fg(Color::White)),
+            Span::styled("Saves:     ", Style::default().fg(Color::DarkGray)),
+            Span::styled(saves, Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(vec![
+            Span::styled("Spellcast: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                if primary == "—" {
+                    "—".to_string()
+                } else {
+                    primary
+                },
+                Style::default().fg(Color::Magenta),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Skills:    ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                truncate_str(&skills_summary, lw),
+                Style::default().fg(Color::White),
+            ),
         ]),
     ];
 
-    // Right column
-    let armor_display = truncate_str(&armor, cols[1].width.saturating_sub(12) as usize);
-    let weapons_display = truncate_str(&weapons, cols[1].width.saturating_sub(12) as usize);
-    let tool_display = truncate_str(&tool_profs, cols[1].width.saturating_sub(12) as usize);
-
+    // ── Right column ──────────────────────────────────────────────────────────
+    // Line 1: Armor training
+    // Line 2: Weapon training
+    // Line 3: blank spacer
+    // Line 4: blank spacer
+    // Line 5: Equipment hint
     let right_text = vec![
         Line::from(vec![
             Span::styled("Armor:    ", Style::default().fg(Color::DarkGray)),
-            Span::styled(armor_display, Style::default().fg(Color::White)),
+            Span::styled(truncate_str(&armor, rw), Style::default().fg(Color::White)),
         ]),
         Line::from(vec![
             Span::styled("Weapons:  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(weapons_display, Style::default().fg(Color::White)),
+            Span::styled(
+                truncate_str(&weapons, rw),
+                Style::default().fg(Color::White),
+            ),
         ]),
+        Line::from(Span::raw("")),
+        Line::from(Span::raw("")),
         Line::from(vec![
-            Span::styled("Tools:    ", Style::default().fg(Color::DarkGray)),
-            Span::styled(tool_display, Style::default().fg(Color::DarkGray)),
+            Span::styled("Equipment: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                truncate_str(&equip_hint, rw),
+                Style::default().fg(Color::DarkGray),
+            ),
         ]),
     ];
 
@@ -751,9 +911,15 @@ fn render_progression_tree(
 
                     // Bake the cursor indicator directly into the item so
                     // highlight_symbol on the List widget isn't needed.
-                    let cursor_str = if is_cursor && is_focused { ">> " } else { "   " };
+                    let cursor_str = if is_cursor && is_focused {
+                        ">> "
+                    } else {
+                        "   "
+                    };
                     let cursor_style = if is_cursor && is_focused {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::DarkGray)
                     };
@@ -792,23 +958,36 @@ fn render_progression_tree(
                     descriptions,
                     ..
                 } => {
-                    let label_type = match choice_type.as_str() {
-                        "asi" => "ASI / FEAT",
-                        "weapon_mastery" => "WEAPON MASTERY",
-                        "subclass" => "SUBCLASS",
-                        other => other,
+                    // skill_proficiency:N → slot number for display
+                    let slot_num: Option<usize> = choice_type
+                        .strip_prefix("skill_proficiency:")
+                        .and_then(|n| n.parse().ok());
+
+                    let label_type = if slot_num.is_some() {
+                        "SKILL PROFICIENCY"
+                    } else {
+                        match choice_type.as_str() {
+                            "asi" => "ASI / FEAT",
+                            "weapon_mastery" => "WEAPON MASTERY",
+                            "subclass" => "SUBCLASS",
+                            other => other,
+                        }
                     };
 
                     let level_str = format!("Lvl {:>2} │ ", level);
-                    let title_name = match choice_type.as_str() {
-                        "asi" => "Ability Score Improvement".to_string(),
-                        "weapon_mastery" => "Weapon Mastery".to_string(),
-                        "subclass" => app
-                            .class_detail
-                            .as_ref()
-                            .and_then(|d| d.class.subclass_title.clone())
-                            .unwrap_or_else(|| "Subclass".to_string()),
-                        other => title_case(other),
+                    let title_name = if let Some(n) = slot_num {
+                        format!("Skill Proficiency — Slot {}", n + 1)
+                    } else {
+                        match choice_type.as_str() {
+                            "asi" => "Ability Score Improvement".to_string(),
+                            "weapon_mastery" => "Weapon Mastery".to_string(),
+                            "subclass" => app
+                                .class_detail
+                                .as_ref()
+                                .and_then(|d| d.class.subclass_title.clone())
+                                .unwrap_or_else(|| "Subclass".to_string()),
+                            other => title_case(other),
+                        }
                     };
 
                     let (title_lvl_style, title_name_style) = if is_locked {
@@ -833,9 +1012,15 @@ fn render_progression_tree(
                     };
 
                     // Same baked cursor indicator on the title line
-                    let cursor_str = if is_cursor && is_focused { ">> " } else { "   " };
+                    let cursor_str = if is_cursor && is_focused {
+                        ">> "
+                    } else {
+                        "   "
+                    };
                     let cursor_style = if is_cursor && is_focused {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::DarkGray)
                     };
@@ -857,7 +1042,11 @@ fn render_progression_tree(
                     } else {
                         match status {
                             DecisionStatus::Pending => {
-                                let fg = if blink { Color::Yellow } else { Color::DarkGray };
+                                let fg = if blink {
+                                    Color::Yellow
+                                } else {
+                                    Color::DarkGray
+                                };
                                 Span::styled(
                                     format!("     ╰─ [ SELECT {} ]", label_type),
                                     Style::default().fg(fg).add_modifier(Modifier::BOLD),
@@ -946,9 +1135,21 @@ pub fn has_unfulfilled_choices(app: &App) -> bool {
         let rows = build_progression_rows(app, &class);
         for r in &rows {
             if r.level() <= app.builder.level {
-                if let ProgressionRow::DecisionSlot { status, .. } = r {
-                    if *status == DecisionStatus::Pending || *status == DecisionStatus::Partial {
-                        return true;
+                if let ProgressionRow::DecisionSlot {
+                    status,
+                    choice_type,
+                    ..
+                } = r
+                {
+                    // Skill proficiency slots are always at level 1; always check them.
+                    let is_skill = choice_type.starts_with("skill_proficiency:");
+                    if is_skill
+                        || *status == DecisionStatus::Pending
+                        || *status == DecisionStatus::Partial
+                    {
+                        if *status != DecisionStatus::Complete {
+                            return true;
+                        }
                     }
                 }
             }
@@ -961,8 +1162,7 @@ pub fn has_unfulfilled_choices(app: &App) -> bool {
 
 pub fn handle_key(app: &mut App, key: KeyEvent) {
     // Tick blink counter on every keypress
-    app.builder.progression_blink_tick =
-        app.builder.progression_blink_tick.wrapping_add(1);
+    app.builder.progression_blink_tick = app.builder.progression_blink_tick.wrapping_add(1);
 
     let rows_count = {
         let q = app.builder.class_search.to_lowercase();
@@ -974,7 +1174,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         app.builder
             .list_state
             .selected()
-            .and_then(|i| filtered.get(i).map(|c| build_progression_rows(app, c).len()))
+            .and_then(|i| {
+                filtered
+                    .get(i)
+                    .map(|c| build_progression_rows(app, c).len())
+            })
             .unwrap_or(0)
     };
 
@@ -1006,10 +1210,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                         } else {
                             ""
                         };
-                        let title =
-                            format!("Level {} Feature{}: {}", level, src_label, name);
-                        app.builder.feature_detail_modal =
-                            Some((title, description.clone()));
+                        let title = format!("Level {} Feature{}: {}", level, src_label, name);
+                        app.builder.feature_detail_modal = Some((title, description.clone()));
                     }
                     ProgressionRow::DecisionSlot {
                         level,
@@ -1018,11 +1220,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                         status,
                         ..
                     } => {
-                        let title = format!(
-                            "Level {} Slot: {}",
-                            level,
-                            choice_type.to_uppercase()
-                        );
+                        let title = format!("Level {} Slot: {}", level, choice_type.to_uppercase());
                         let body = if descriptions.is_empty() {
                             format!(
                                 "Status: {:?}\n\nNo choices recorded for this slot yet.\nPress Enter to make a selection.",
@@ -1076,8 +1274,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                     load_class_detail_for_filtered(app);
                 }
             } else {
-                app.builder.feature_cursor =
-                    app.builder.feature_cursor.saturating_sub(1);
+                app.builder.feature_cursor = app.builder.feature_cursor.saturating_sub(1);
             }
         }
         KeyCode::Down => {
@@ -1097,22 +1294,19 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                     load_class_detail_for_filtered(app);
                 }
             } else if rows_count > 0 {
-                app.builder.feature_cursor =
-                    (app.builder.feature_cursor + 1).min(rows_count - 1);
+                app.builder.feature_cursor = (app.builder.feature_cursor + 1).min(rows_count - 1);
             }
         }
 
         // Vim-style navigation always targets the right pane
         KeyCode::Char('k') | KeyCode::Char('K') => {
             app.builder.focus_index = 1;
-            app.builder.feature_cursor =
-                app.builder.feature_cursor.saturating_sub(1);
+            app.builder.feature_cursor = app.builder.feature_cursor.saturating_sub(1);
         }
         KeyCode::Char('j') | KeyCode::Char('J') => {
             app.builder.focus_index = 1;
             if rows_count > 0 {
-                app.builder.feature_cursor =
-                    (app.builder.feature_cursor + 1).min(rows_count - 1);
+                app.builder.feature_cursor = (app.builder.feature_cursor + 1).min(rows_count - 1);
             }
         }
 
@@ -1124,11 +1318,23 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 if app.builder.level < subclass_unlock_level(app) {
                     app.builder.subclass_id = None;
                 }
+                // Persist the new level so the backend can return the correct
+                // manifest (decision_points are filtered by total_level).
+                if app.builder.class_id.is_some() && app.builder.draft_id.is_some() {
+                    let _ = app.save_draft();
+                    refresh_progression_manifest(app);
+                }
             }
         }
         KeyCode::Char('+') | KeyCode::Char('=') => {
             if app.builder.level < 20 {
                 app.builder.level += 1;
+            }
+            // Persist the new level so the backend can return the correct
+            // manifest (decision_points are filtered by total_level).
+            if app.builder.class_id.is_some() && app.builder.draft_id.is_some() {
+                let _ = app.save_draft();
+                refresh_progression_manifest(app);
             }
             // Prompt for subclass if we just reached the unlock level
             let unlock = subclass_unlock_level(app);
@@ -1158,14 +1364,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                     app.builder.show_subclass_modal = true;
                     app.builder.subclass_list_state.select(Some(0));
                 } else {
-                    app.status_msg =
-                        "No subclasses available for this class.".to_string();
+                    app.status_msg = "No subclasses available for this class.".to_string();
                 }
             } else {
                 app.status_msg = format!(
                     "Reach level {} to pick a subclass (currently level {}).",
-                    unlock,
-                    app.builder.level
+                    unlock, app.builder.level
                 );
             }
         }
@@ -1173,8 +1377,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         // Tab: proceed to next step
         KeyCode::Tab => {
             if has_unfulfilled_choices(app) {
-                app.status_msg =
-                    "Please complete all choices for your current level.".to_string();
+                app.status_msg = "Please complete all choices for your current level.".to_string();
                 return;
             }
             let q = app.builder.class_search.to_lowercase();
@@ -1287,34 +1490,49 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                             }
                             ProgressionRow::DecisionSlot {
                                 level, choice_type, ..
-                            } => match choice_type.as_str() {
-                                "asi" => {
-                                    app.builder.show_progression_asi_modal = true;
-                                    app.builder.asi_modal_stage =
-                                        crate::models::app_state::AsiModalStage::Mode;
-                                    app.builder.progression_slot_level = Some(*level);
-                                }
-                                "weapon_mastery" => {
-                                    app.builder.show_progression_wm_modal = true;
-                                    app.builder.progression_slot_level = Some(*level);
-                                }
-                                "subclass" => {
-                                    let has_sc = app
-                                        .class_detail
-                                        .as_ref()
-                                        .map(|d| !d.subclasses.is_empty())
-                                        .unwrap_or(false);
-                                    if has_sc {
-                                        app.builder.show_subclass_modal = true;
-                                        app.builder.subclass_list_state.select(Some(0));
-                                    } else {
-                                        app.status_msg =
-                                            "No subclasses available for this class."
-                                                .to_string();
+                            } => {
+                                // skill_proficiency:N → open the skill picker modal
+                                if let Some(slot_str) =
+                                    choice_type.strip_prefix("skill_proficiency:")
+                                {
+                                    if let Ok(slot_idx) = slot_str.parse::<usize>() {
+                                        app.builder.show_skill_choice_modal = true;
+                                        app.builder.skill_choice_slot = slot_idx;
+                                        app.builder.skill_choice_search.clear();
+                                        app.builder.skill_choice_cursor = 0;
+                                        app.builder.skill_choice_list_state.select(Some(0));
                                     }
+                                    return;
                                 }
-                                _ => {}
-                            },
+                                match choice_type.as_str() {
+                                    "asi" => {
+                                        app.builder.show_progression_asi_modal = true;
+                                        app.builder.asi_modal_stage =
+                                            crate::models::app_state::AsiModalStage::Mode;
+                                        app.builder.progression_slot_level = Some(*level);
+                                    }
+                                    "weapon_mastery" => {
+                                        app.builder.show_progression_wm_modal = true;
+                                        app.builder.progression_slot_level = Some(*level);
+                                    }
+                                    "subclass" => {
+                                        let has_sc = app
+                                            .class_detail
+                                            .as_ref()
+                                            .map(|d| !d.subclasses.is_empty())
+                                            .unwrap_or(false);
+                                        if has_sc {
+                                            app.builder.show_subclass_modal = true;
+                                            app.builder.subclass_list_state.select(Some(0));
+                                        } else {
+                                            app.status_msg =
+                                                "No subclasses available for this class."
+                                                    .to_string();
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
                         }
                     }
                 }
@@ -1354,6 +1572,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
 /// raw-index version so that search filtering never produces a mismatched
 /// class_detail.
 fn load_class_detail_for_filtered(app: &mut App) {
+    load_class_detail_for_current(app);
+}
+
+/// Public version of the above — called from other steps when navigating
+/// back to the Class step so the correct class detail is loaded immediately.
+pub fn load_class_detail_for_current(app: &mut App) {
     let q = app.builder.class_search.to_lowercase();
     // Collect target data first to avoid holding a shared borrow on app.classes
     // while we mutably borrow the rest of app below.
@@ -1402,5 +1626,61 @@ fn truncate_str(s: &str, max_chars: usize) -> String {
     } else {
         let cut: String = chars[..max_chars.saturating_sub(1)].iter().collect();
         format!("{}…", cut)
+    }
+}
+
+// ── Unit Tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_parse_skill_choices_returns_count_and_options() {
+        let class: crate::models::Class = serde_json::from_value(json!({
+            "id": 1,
+            "name": "Rogue",
+            "source_slug": "phb",
+            "hit_die": 8,
+            "skill_choices": [{"choose": 2, "from": ["acrobatics", "history", "insight"]}],
+            "starting_equipment": null
+        }))
+        .unwrap();
+        let (count, options) = parse_skill_choices_pub(&class);
+        assert_eq!(count, 2);
+        assert_eq!(options, vec!["Acrobatics", "History", "Insight"]); // title_case diterapkan
+    }
+
+    #[test]
+    fn test_parse_skill_choices_empty() {
+        let class: crate::models::Class = serde_json::from_value(json!({
+            "id": 2,
+            "name": "Test",
+            "source_slug": "phb",
+            "hit_die": 8,
+            "skill_choices": [],
+            "starting_equipment": null
+        }))
+        .unwrap();
+        let (count, options) = parse_skill_choices_pub(&class);
+        assert_eq!(count, 0);
+        assert!(options.is_empty());
+    }
+
+    #[test]
+    fn test_parse_skill_choices_from_object_items() {
+        let class: crate::models::Class = serde_json::from_value(json!({
+            "id": 3,
+            "name": "Fighter",
+            "source_slug": "phb",
+            "hit_die": 10,
+            "skill_choices": [{"choose": 1, "from": [{"name": "athletics"}, "perception"]}],
+            "starting_equipment": null
+        }))
+        .unwrap();
+        let (count, options) = parse_skill_choices_pub(&class);
+        assert_eq!(count, 1);
+        assert_eq!(options, vec!["Athletics", "Perception"]);
     }
 }
