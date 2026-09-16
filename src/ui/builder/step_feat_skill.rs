@@ -96,17 +96,43 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         search_chunks[1],
     );
 
+    // Already-chosen skills from Class and Species (for replacement detection)
+    let class_skills: Vec<String> = app
+        .builder
+        .skill_choices
+        .iter()
+        .map(|s| s.to_lowercase())
+        .collect();
+    let species_skill: Option<String> = app
+        .builder
+        .race_skill_choice
+        .as_ref()
+        .map(|s| s.to_lowercase());
+
     let items: Vec<ListItem> = filtered
         .iter()
         .enumerate()
         .map(|(i, s)| {
+            let lower = s.to_lowercase();
             let chosen = app
                 .builder
                 .feat_skill_choices
                 .iter()
                 .any(|c| c.as_str() == *s);
+            let is_replacement = class_skills.contains(&lower)
+                || species_skill
+                    .as_ref()
+                    .map(|sp| *sp == lower)
+                    .unwrap_or(false);
             let current = i == app.builder.feat_picker_index;
-            let prefix = if chosen { "✓ " } else { "  " };
+            let (prefix, color, suffix) = if chosen {
+                ("✓ ", Color::Green, "")
+            } else if is_replacement {
+                // Class atau Species sudah punya skill ini → tampilkan indikator replacement
+                ("⚠ ", Color::Yellow, " (Sudah dimiliki — pilih ganti)")
+            } else {
+                ("  ", Color::White, "")
+            };
             let style = if current {
                 Style::default()
                     .fg(Color::Yellow)
@@ -114,9 +140,9 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             } else if chosen {
                 Style::default().fg(Color::Green)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(color)
             };
-            ListItem::new(format!("{}{}", prefix, s)).style(style)
+            ListItem::new(format!("{}{}{}", prefix, s, suffix)).style(style)
         })
         .collect();
 
@@ -207,7 +233,26 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 .filter(|s| search.is_empty() || s.to_lowercase().contains(&search))
                 .collect();
 
+            // Check if skill is already chosen from Class or Species
+            let class_skills: Vec<String> = app
+                .builder
+                .skill_choices
+                .iter()
+                .map(|s| s.to_lowercase())
+                .collect();
+            let species_skill: Option<String> = app
+                .builder
+                .race_skill_choice
+                .as_ref()
+                .map(|s| s.to_lowercase());
+
             if let Some(&skill) = filtered.get(app.builder.feat_picker_index) {
+                let lower = skill.to_lowercase();
+                let is_replacement = class_skills.contains(&lower)
+                    || species_skill
+                        .as_ref()
+                        .map(|sp| *sp == lower)
+                        .unwrap_or(false);
                 let already = app
                     .builder
                     .feat_skill_choices
@@ -217,7 +262,14 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                     app.builder.feat_skill_choices.remove(idx);
                 } else if app.builder.feat_skill_choices.len() < choose {
                     app.builder.feat_skill_choices.push(skill.to_string());
-                    app.status_msg = format!("Skill: {} selected", skill);
+                    if is_replacement {
+                        app.status_msg = format!(
+                            "Skill '{}' sudah dimiliki dari Class/Species. Ini akan dipilih sebagai replacement.",
+                            skill
+                        );
+                    } else {
+                        app.status_msg = format!("Skill: {} selected", skill);
+                    }
                 }
             }
 

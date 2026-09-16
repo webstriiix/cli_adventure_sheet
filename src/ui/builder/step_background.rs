@@ -258,7 +258,16 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 }
             } else {
                 app.builder.step = CharacterCreationStep::Class;
-                app.builder.list_state.select(Some(0));
+                // Restore the list cursor to the class that was previously
+                // confirmed so the progression tree renders correctly.
+                let saved_class_id = app.builder.class_id;
+                let restore_idx = saved_class_id.and_then(|id| {
+                    app.classes.iter().position(|c| c.id == id)
+                });
+                app.builder.list_state.select(Some(restore_idx.unwrap_or(0)));
+                // Reload class detail for the restored class so Source A
+                // (static features) and the manifest refresh work correctly.
+                crate::ui::builder::step_class::load_class_detail_for_current(app);
                 app.builder.focus_index = 0;
                 app.status_msg.clear();
             }

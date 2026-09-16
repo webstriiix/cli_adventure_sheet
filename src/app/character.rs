@@ -15,7 +15,8 @@ impl App {
 
         self.edit_buffers[0] = character.name.clone();
         self.edit_buffers[1] = character.experience_pts.to_string();
-        self.edit_buffers[2] = crate::models::rules::level_from_xp(character.experience_pts).to_string();
+        self.edit_buffers[2] =
+            crate::models::rules::level_from_xp(character.experience_pts).to_string();
         self.edit_buffers[3] = character.max_hp.to_string();
         self.edit_buffers[4] = character.current_hp.to_string();
         self.edit_buffers[5] = character.temp_hp.to_string();
@@ -149,7 +150,8 @@ impl App {
                             self.client.get_hit_dice(c.id),
                             self.client.get_class_detail(&class_name, &class_source),
                             self.client.get_character_actions(c.id),
-                            self.client.get_class_resources(&class_name, &class_source, level),
+                            self.client
+                                .get_class_resources(&class_name, &class_source, level),
                             self.client.get_proficiencies(c.id)
                         )
                     });
@@ -157,24 +159,27 @@ impl App {
                 // Build char_classes from API response (authoritative)
                 let char_classes: Vec<CharacterClass> = char_classes_result
                     .as_ref()
-                    .map(|ccs| ccs
-                    .iter()
-                    .map(|ccr| CharacterClass {
-                        id: 0,
-                        character_id: c.id,
-                        class_id: ccr.class_id,
-                        level: ccr.level,
-                        is_primary: ccr.is_primary,
-                        subclass_id: ccr.subclass_id,
+                    .map(|ccs| {
+                        ccs.iter()
+                            .map(|ccr| CharacterClass {
+                                id: 0,
+                                character_id: c.id,
+                                class_id: ccr.class_id,
+                                level: ccr.level,
+                                is_primary: ccr.is_primary,
+                                subclass_id: ccr.subclass_id,
+                            })
+                            .collect()
                     })
-                    .collect())
                     .unwrap_or_default();
 
                 // Extract subclass_name from API response (primary class)
                 let api_subclass_name: String = char_classes_result
                     .as_ref()
                     .ok()
-                    .and_then(|ccs: &Vec<CharacterClassResponse>| ccs.iter().find(|cc| cc.is_primary))
+                    .and_then(|ccs: &Vec<CharacterClassResponse>| {
+                        ccs.iter().find(|cc| cc.is_primary)
+                    })
                     .and_then(|cc| cc.subclass_name.clone())
                     .unwrap_or_default();
 
@@ -323,6 +328,16 @@ impl App {
                 }
             }
         }
+        // Load skill dari character_proficiencies (sumber kebenaran utama)
+        // Gabungkan dengan yang dari notes sebagai fallback untuk data lama.
+        for prof in &self.char_proficiencies {
+            if prof.category == "skill" {
+                let key = prof.name.to_lowercase();
+                if !skills.iter().any(|s| s.to_lowercase() == key) {
+                    skills.push(prof.name.clone());
+                }
+            }
+        }
         self.char_chosen_skills = skills;
 
         // Expertise
@@ -467,7 +482,9 @@ impl App {
                         actions.limited_use.push(la.clone());
                     } else {
                         // Update max_uses in case level changed
-                        if let Some(existing) = actions.limited_use.iter_mut().find(|a| a.name == la.name) {
+                        if let Some(existing) =
+                            actions.limited_use.iter_mut().find(|a| a.name == la.name)
+                        {
                             existing.max_uses = la.max_uses;
                         }
                     }
@@ -514,17 +531,27 @@ impl App {
         let subclass_gate = self
             .class_detail
             .as_ref()
-            .and_then(|d| d.features.iter().find(|f| f.is_subclass_gate).map(|f| f.level))
+            .and_then(|d| {
+                d.features
+                    .iter()
+                    .find(|f| f.is_subclass_gate)
+                    .map(|f| f.level)
+            })
             .unwrap_or(3);
 
-        let has_subclass = self.char_classes.first().and_then(|cc| cc.subclass_id).is_some();
+        let has_subclass = self
+            .char_classes
+            .first()
+            .and_then(|cc| cc.subclass_id)
+            .is_some();
 
         if char_level >= subclass_gate && !has_subclass {
             let class_name = self.char_class_name.clone();
-            self.level_up_queue.push(crate::app::LevelUpPrompt::SubclassChoice {
-                class_id: first_class_id,
-                class_name,
-            });
+            self.level_up_queue
+                .push(crate::app::LevelUpPrompt::SubclassChoice {
+                    class_id: first_class_id,
+                    class_name,
+                });
         }
 
         self.screen = Screen::CharacterSheet;
@@ -565,7 +592,8 @@ impl App {
             String::new()
         };
 
-        let char_level = self.active_character
+        let char_level = self
+            .active_character
             .as_ref()
             .map(|c| crate::models::rules::level_from_xp(c.experience_pts))
             .unwrap_or(1);
@@ -659,6 +687,31 @@ impl App {
                         cache.character = active.clone();
                         self.storage.save_cache(&filename, &cache);
                     }
+                }
+            }
+        }
+    }
+
+    /// Fetch and refresh the progression manifest from the backend if a draft or character is active.
+    pub fn refresh_progression_manifest(&mut self) {
+        let char_id = self
+            .builder
+            .draft_id
+            .or_else(|| self.active_character.as_ref().map(|c| c.id));
+
+        if let Some(id) = char_id {
+            let rt = self.rt.clone();
+            let client = self.client.clone();
+            // Always overwrite: the manifest must reflect the *current* class+level
+            // combination, not a stale snapshot from a prior class selection.
+            match rt.block_on(client.get_progression_manifest(id)) {
+                Ok(manifest) => {
+                    self.builder.progression_manifest = Some(manifest);
+                }
+                Err(e) => {
+                    // Don't clobber a good existing manifest on a transient failure;
+                    // just log and let the tree continue with synthetic slots.
+                    tracing::warn!("Could not fetch progression manifest: {}", e);
                 }
             }
         }

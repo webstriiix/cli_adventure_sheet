@@ -52,16 +52,20 @@ pub fn submit_character_from_builder(app: &mut App) {
         if !b.flaw.is_empty() {
             parts.push(format!("Flaw: {}", b.flaw));
         }
-        // Collect all chosen skill proficiencies (class + race + feat)
-        let mut all_skills: Vec<String> = Vec::new();
-        all_skills.extend(b.skill_choices.iter().cloned());
+        // Skill proficiency sekarang di-sync via endpoint /proficiencies (bukan tag notes).
+        // Tag [SKILLS:...] dipertahankan hanya sebagai legacy fallback untuk data lama.
+        let mut legacy_skills: Vec<String> = Vec::new();
+        legacy_skills.extend(b.skill_choices.iter().cloned());
         if let Some(ref race_skill) = b.race_skill_choice {
-            all_skills.push(race_skill.clone());
+            legacy_skills.push(race_skill.clone());
         }
-        all_skills.extend(b.feat_skill_choices.iter().cloned());
-        if !all_skills.is_empty() {
-            parts.push(format!("[SKILLS:{}]", all_skills.join(",")));
+        legacy_skills.extend(b.feat_skill_choices.iter().cloned());
+        if !legacy_skills.is_empty() {
+            parts.push(format!("[SKILLS:{}]", legacy_skills.join(",")));
         }
+
+        // NOTE: Sync ke /proficiencies akan dilakukan SETELAH karakter dibuat/diupdate,
+        // karena butuh character_id. Lakukan di akhir fungsi ini (setelah final_character).
 
         if parts.is_empty() {
             None
@@ -183,6 +187,10 @@ pub fn submit_character_from_builder(app: &mut App) {
                 };
                 let _ = rt.block_on(app.client.add_spell(id, &req));
             }
+
+            // === SYNC SKILL PROFICIENCIES KE BACKEND ===
+            // Kirim skill ke tabel character_proficiencies (bukan tag notes lagi).
+            app.sync_skill_proficiencies_to_backend(character.id);
 
             app.builder = BuilderState::default();
             app.fetch_characters();
