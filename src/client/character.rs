@@ -6,7 +6,7 @@ use crate::models::{
     AddCharacterClassRequest, AddInventoryRequest, AddProficiencyRequest, AddSpellRequest,
     AsiChoiceRequest, Character, CharacterClassResponse, CharacterFeat, CharacterProficiency, CharacterSpell,
     CharacterSpellSlot, CreateCharacterRequest, Feat, InventoryItem, PatchCharacterClassRequest,
-    PatchProficiencyRequest, UpdateCharacterRequest, UpdateInventoryRequest, UpdateSpellRequest,
+    PatchProficiencyRequest, ProgressionManifest, UpdateCharacterRequest, UpdateInventoryRequest, UpdateSpellRequest,
 };
 
 use super::{ApiClient, ApiError};
@@ -293,6 +293,19 @@ impl ApiClient {
         let resp = self
             .auth_post(&format!("/characters/{character_id}/asi-choice"))
             .json(req)
+            .send()
+            .await?;
+        self.handle_response(resp).await
+    }
+
+    /// GET /characters/{id}/progression
+    /// Get full progression manifest containing decision points for level 1-20.
+    pub async fn get_progression_manifest(
+        &self,
+        character_id: Uuid,
+    ) -> Result<ProgressionManifest, ApiError> {
+        let resp = self
+            .auth_get(&format!("/characters/{character_id}/progression"))
             .send()
             .await?;
         self.handle_response(resp).await

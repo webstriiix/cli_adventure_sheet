@@ -53,10 +53,16 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     let body = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(outer[1]);
 
-    // Already-chosen skills (background + class)
+    // Already-chosen skills (class + feat)
     let already: Vec<String> = app
         .builder
         .skill_choices
+        .iter()
+        .map(|s| s.to_lowercase())
+        .collect();
+    let feat_skills: Vec<String> = app
+        .builder
+        .feat_skill_choices
         .iter()
         .map(|s| s.to_lowercase())
         .collect();
@@ -72,14 +78,20 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         .iter()
         .map(|skill| {
             let lower = skill.to_lowercase();
-            let (marker, color) = if lower == picked {
-                ("✓ ", Color::Green)
+            let is_replacement = already.contains(&lower) || feat_skills.contains(&lower);
+
+            let (marker, color, suffix) = if lower == picked {
+                ("✓ ", Color::Green, "")
+            } else if is_replacement {
+                // Class atau Feat sudah punya skill ini → tawarkan replacement
+                ("⚠ ", Color::Yellow, " (Sudah dimiliki — pilih ganti)")
             } else if already.contains(&lower) {
-                ("• ", Color::DarkGray) // already have it, but can still pick
+                ("• ", Color::DarkGray, "")
             } else {
-                ("  ", Color::White)
+                ("  ", Color::White, "")
             };
-            ListItem::new(format!("{}{}", marker, skill)).style(Style::default().fg(color))
+            ListItem::new(format!("{}{}{}", marker, skill, suffix))
+                .style(Style::default().fg(color))
         })
         .collect();
 
@@ -187,10 +199,24 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
             let chosen = ALL_SKILLS
                 .get(app.builder.feat_picker_index)
                 .map(|s| s.to_string());
+
+            // Check if this skill is already chosen from Class or Feat
+            if let Some(ref skill) = chosen {
+                let lower = skill.to_lowercase();
+                let is_replacement = already.contains(&lower) || feat_skills.contains(&lower);
+                if is_replacement {
+                    app.status_msg = format!(
+                        "Skill '{}' sudah dimiliki dari Class/Feat. Ini akan dipilih sebagai replacement.",
+                        skill
+                    );
+                } else {
+                    app.status_msg = "Skill proficiency chosen.".to_string();
+                }
+            }
+
             app.builder.race_skill_choice = chosen;
             app.builder.feat_picker_index = 0;
             app.builder.step = CharacterCreationStep::RaceFeat;
-            app.status_msg = "Skill proficiency chosen.".to_string();
         }
         _ => {}
     }

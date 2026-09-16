@@ -73,7 +73,9 @@ impl Character {
         }) {
             return true;
         }
-        chosen_skills.iter().any(|s| s.to_lowercase() == skill_lower)
+        chosen_skills
+            .iter()
+            .any(|s| s.to_lowercase() == skill_lower)
     }
 
     pub fn has_skill_expertise(
@@ -90,7 +92,9 @@ impl Character {
         }) {
             return true;
         }
-        expertise_skills.iter().any(|s| s.to_lowercase().contains(&skill_lower))
+        expertise_skills
+            .iter()
+            .any(|s| s.to_lowercase().contains(&skill_lower))
     }
 
     pub fn get_skill_modifier(
@@ -105,7 +109,13 @@ impl Character {
         let is_prof = self.has_skill_proficiency(skill, manual_profs, chosen_skills);
         let is_exp = self.has_skill_expertise(skill, manual_profs, expertise_skills);
         let pb = self.proficiency_bonus();
-        let bonus = if is_exp { pb * 2 } else if is_prof { pb } else { 0 };
+        let bonus = if is_exp {
+            pb * 2
+        } else if is_prof {
+            pb
+        } else {
+            0
+        };
         (is_prof, is_exp, base_mod + bonus)
     }
 
@@ -116,9 +126,9 @@ impl Character {
         class_saves: &[String],
     ) -> (bool, bool, i32) {
         let base_mod = self.ability_modifier(ability);
-        let manual = manual_profs.iter().find(|p| {
-            p.category == "saving_throw" && p.name.eq_ignore_ascii_case(ability)
-        });
+        let manual = manual_profs
+            .iter()
+            .find(|p| p.category == "saving_throw" && p.name.eq_ignore_ascii_case(ability));
 
         let (is_prof, is_exp) = match manual {
             Some(p) => (true, p.proficiency_type == "expertise"),
@@ -129,7 +139,13 @@ impl Character {
         };
 
         let pb = self.proficiency_bonus();
-        let bonus = if is_exp { pb * 2 } else if is_prof { pb } else { 0 };
+        let bonus = if is_exp {
+            pb * 2
+        } else if is_prof {
+            pb
+        } else {
+            0
+        };
         (is_prof, is_exp, base_mod + bonus)
     }
 }
@@ -439,4 +455,140 @@ pub struct CharacterDraft {
     pub lineage_id: Option<i32>,
     pub abilities: [i32; 6],
     pub equipment_option: Option<usize>,
+}
+
+// ── Progression Manifest ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DecisionStatus {
+    Pending,
+    Partial,
+    Complete,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecisionPointChoice {
+    pub id: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecisionPoint {
+    pub level: i32,
+    pub choice_type: String, // "asi" or "weapon_mastery"
+    pub required_count: i32,
+    pub current_choices: Vec<DecisionPointChoice>,
+    pub status: DecisionStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProgressionManifest {
+    pub character_id: Uuid,
+    pub total_level: i32,
+    pub class_name: String,
+    pub class_source: String,
+    pub decision_points: Vec<DecisionPoint>,
+}
+
+// ── Unit Tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_test_character() -> Character {
+        Character {
+            id: Uuid::new_v4(),
+            experience_pts: 0, // level 1
+            strength: 10,
+            dexterity: 14,
+            constitution: 10,
+            intelligence: 10,
+            wisdom: 10,
+            charisma: 10,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_has_skill_proficiency_matches_case_insensitive() {
+        let ch = make_test_character();
+        let manual = vec![CharacterProficiency {
+            id: 1,
+            character_id: ch.id,
+            category: "skill".into(),
+            name: "stealth".into(),
+            proficiency_type: "proficiency".into(),
+        }];
+        assert!(ch.has_skill_proficiency("Stealth", &manual, &[]));
+        assert!(ch.has_skill_proficiency("stealth", &manual, &[]));
+        assert!(!ch.has_skill_proficiency("perception", &manual, &[]));
+    }
+
+    #[test]
+    fn test_has_skill_proficiency_from_chosen_skills() {
+        let ch = make_test_character();
+        assert!(ch.has_skill_proficiency("arcana", &[], &["Arcana".to_string()]));
+        assert!(!ch.has_skill_proficiency("history", &[], &["Arcana".to_string()]));
+    }
+
+    #[test]
+    fn test_has_skill_expertise() {
+        let ch = make_test_character();
+        let manual = vec![CharacterProficiency {
+            id: 1,
+            character_id: ch.id,
+            category: "skill".into(),
+            name: "perception".into(),
+            proficiency_type: "expertise".into(),
+        }];
+        assert!(ch.has_skill_expertise("Perception", &manual, &[]));
+        assert!(ch.has_skill_expertise("perception", &manual, &[]));
+        // expertise in manual_profs also satisfies has_skill_proficiency
+        assert!(ch.has_skill_proficiency("perception", &manual, &[]));
+        // expertise from string list
+        assert!(ch.has_skill_expertise("stealth", &[], &["Stealth".to_string()]));
+        assert!(!ch.has_skill_expertise("athletics", &[], &[]));
+    }
+
+    #[test]
+    fn test_get_skill_modifier_proficiency_doubles() {
+        // dex 14 → mod +2; level 1 (XP 0) → prof bonus +2
+        // proficiency: base (+2) + PB (+2) = +4
+        // expertise: base (+2) + 2*PB (+4) = +6
+        // non-proficient: base (+2) + 0 = +2
+        let ch = make_test_character();
+        let manual_prof = vec![CharacterProficiency {
+            id: 1,
+            character_id: ch.id,
+            category: "skill".into(),
+            name: "stealth".into(),
+            proficiency_type: "proficiency".into(),
+        }];
+        let manual_exp = vec![CharacterProficiency {
+            id: 2,
+            character_id: ch.id,
+            category: "skill".into(),
+            name: "stealth".into(),
+            proficiency_type: "expertise".into(),
+        }];
+
+        let (is_prof, is_exp, bonus) =
+            ch.get_skill_modifier("Stealth", "dexterity", &manual_prof, &[], &[]);
+        assert!(is_prof);
+        assert!(!is_exp);
+        assert_eq!(bonus, 4);
+
+        let (is_prof, is_exp, bonus) =
+            ch.get_skill_modifier("Stealth", "dexterity", &manual_exp, &[], &[]);
+        assert!(is_prof);
+        assert!(is_exp);
+        assert_eq!(bonus, 6);
+
+        let (is_prof, is_exp, bonus) = ch.get_skill_modifier("Stealth", "dexterity", &[], &[], &[]);
+        assert!(!is_prof);
+        assert!(!is_exp);
+        assert_eq!(bonus, 2);
+    }
 }

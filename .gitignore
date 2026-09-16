@@ -2,3 +2,4 @@
 API_DOCUMENTATION.md
 .env
 *.log
+/agent

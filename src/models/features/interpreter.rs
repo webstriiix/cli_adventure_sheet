@@ -76,6 +76,58 @@ pub fn interpret_feature(text: &str) -> Feature {
         return Feature::SkillChoice { choose: n };
     }
 
+    // ── Spells with school filter (Evocation Savant, etc.) ──────────────────
+    // e.g. "You learn one evocation spell of your choice"
+    // e.g. "You gain a wizard spell of level 2 or lower"
+    if lower.contains("spell") {
+        let n = extract_number(&lower).unwrap_or(1);
+        
+        // Extract school if present
+        let school = if lower.contains("evocation") {
+            Some("evocation".to_string())
+        } else if lower.contains("abjuration") {
+            Some("abjuration".to_string())
+        } else if lower.contains("conjuration") {
+            Some("conjuration".to_string())
+        } else if lower.contains("divination") {
+            Some("divination".to_string())
+        } else if lower.contains("enchantment") {
+            Some("enchantment".to_string())
+        } else if lower.contains("illusion") {
+            Some("illusion".to_string())
+        } else if lower.contains("necromancy") {
+            Some("necromancy".to_string())
+        } else if lower.contains("transmutation") {
+            Some("transmutation".to_string())
+        } else {
+            None
+        };
+        
+        // Extract max level if present (e.g., "level 2 or lower")
+        let max_level = if lower.contains("level 1 or lower") {
+            Some(1)
+        } else if lower.contains("level 2 or lower") {
+            Some(2)
+        } else if lower.contains("level 3 or lower") {
+            Some(3)
+        } else if lower.contains("level 4 or lower") {
+            Some(4)
+        } else if lower.contains("level 5 or lower") {
+            Some(5)
+        } else {
+            None
+        };
+        
+        if school.is_some() || max_level.is_some() {
+            return Feature::Spells {
+                choose: n,
+                school,
+                max_level,
+                class: None, // Will be inferred from class context
+            };
+        }
+    }
+
     // ── Fallback ─────────────────────────────────────────────────────────────
     Feature::StaticFeat(text.to_string())
 }

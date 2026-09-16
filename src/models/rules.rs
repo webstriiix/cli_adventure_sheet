@@ -126,12 +126,80 @@ pub fn spell_slots_max(caster_progression: &str, char_level: i32, slot_idx: usiz
 
 pub fn ch_ability_score(ch: &Character, key: &str) -> i32 {
     match key.to_lowercase().as_str() {
-        "str" => ch.strength,
-        "dex" => ch.dexterity,
-        "con" => ch.constitution,
-        "int" => ch.intelligence,
-        "wis" => ch.wisdom,
-        "cha" => ch.charisma,
+        "str" | "strength" => ch.strength,
+        "dex" | "dexterity" => ch.dexterity,
+        "con" | "constitution" => ch.constitution,
+        "int" | "intelligence" => ch.intelligence,
+        "wis" | "wisdom" => ch.wisdom,
+        "cha" | "charisma" => ch.charisma,
         _ => 0,
+    }
+}
+
+// ── Unit Tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_proficiency_bonus_by_level() {
+        assert_eq!(proficiency_bonus(1), 2);
+        assert_eq!(proficiency_bonus(4), 2);
+        assert_eq!(proficiency_bonus(5), 3);
+        assert_eq!(proficiency_bonus(9), 4);
+        assert_eq!(proficiency_bonus(13), 5);
+        assert_eq!(proficiency_bonus(17), 6);
+        assert_eq!(proficiency_bonus(20), 6);
+    }
+
+    #[test]
+    fn test_ability_modifier_values() {
+        assert_eq!(ability_modifier(10), 0);
+        assert_eq!(ability_modifier(8), -1);
+        assert_eq!(ability_modifier(14), 2);
+        assert_eq!(ability_modifier(18), 4);
+        assert_eq!(ability_modifier(20), 5);
+    }
+
+    #[test]
+    fn test_format_modifier() {
+        assert_eq!(format_modifier(0), "+0");
+        assert_eq!(format_modifier(-1), "-1");
+        assert_eq!(format_modifier(4), "+4");
+    }
+
+    #[test]
+    fn test_level_from_xp() {
+        assert_eq!(level_from_xp(0), 1);
+        assert_eq!(level_from_xp(300), 2);
+        assert_eq!(level_from_xp(900), 3);
+        assert_eq!(level_from_xp(355_000), 20);
+        assert_eq!(level_from_xp(1_000_000), 20);
+    }
+
+    #[test]
+    fn test_xp_from_level() {
+        assert_eq!(xp_from_level(1), 0);
+        assert_eq!(xp_from_level(2), 300);
+        assert_eq!(xp_from_level(20), 355_000);
+    }
+
+    #[test]
+    fn test_max_prepared_spells_paladin() {
+        assert_eq!(max_prepared_spells("Paladin", 1, 3), 2);
+        assert_eq!(max_prepared_spells("paladin", 20, 5), 15);
+        // Fallback for wizard: level + mod
+        assert_eq!(max_prepared_spells("Wizard", 5, 4), 9);
+    }
+
+    #[test]
+    fn test_spell_slots_max_full_caster() {
+        // Level 1 wizard: 2 1st level slots
+        assert_eq!(spell_slots_max("full", 1, 0), 2);
+        assert_eq!(spell_slots_max("full", 1, 1), 0);
+        // Level 3 wizard: 4 1st level, 2 2nd level
+        assert_eq!(spell_slots_max("full", 3, 0), 4);
+        assert_eq!(spell_slots_max("full", 3, 1), 2);
     }
 }

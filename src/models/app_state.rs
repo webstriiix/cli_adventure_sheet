@@ -1,6 +1,6 @@
 use crate::models::features::Feature;
 use ratatui::widgets::{ListState, TableState};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Screen {
@@ -20,6 +20,12 @@ pub enum CharacterCreationStep {
     Equipment,
 }
 
+impl std::fmt::Display for CharacterCreationStep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BgAbilityChoice {
     pub options: Vec<String>,
@@ -27,11 +33,33 @@ pub struct BgAbilityChoice {
     pub selected_idx: Option<usize>, // Which option was selected
 }
 
+/// State for the choice-picker modal opened when the user presses Enter on a
+/// feature slot in the Class Manager feature list.
+#[derive(Debug, Clone)]
+pub struct FeatureChoiceModal {
+    /// The `ClassFeature.id` this modal is choosing for.
+    pub feature_id: i32,
+    /// Which slot index (0-based) within the feature is being filled.
+    pub slot_index: usize,
+    /// Human-readable title shown in the modal border.
+    pub title: String,
+    /// Full option list (pre-filtered for this feature type).
+    pub options: Vec<String>,
+    /// Live-filter search string.
+    pub search: String,
+    /// Cursor within the filtered result set.
+    pub cursor: usize,
+}
+
 pub struct BuilderState {
     pub step: CharacterCreationStep,
     pub name: String,
     pub race_id: Option<i32>,
+    /// The class that has been **confirmed** (Tab/confirm) and will be saved.
     pub class_id: Option<i32>,
+    /// The class currently **highlighted for preview** (Enter in the list).
+    /// The right pane renders this class's details; it becomes `class_id` on Tab-confirm.
+    pub previewed_class_id: Option<i32>,
     pub subclass_id: Option<i32>,
     pub bg_id: Option<i32>,
     pub bonus_feat_id: Option<i32>, // race/species bonus feat (Versatile)
@@ -39,6 +67,9 @@ pub struct BuilderState {
     pub race_skill_choice: Option<String>, // Human Skillful: bonus skill proficiency
     pub feat_picker_search: String,
     pub feat_picker_index: usize,
+    pub class_search: String,
+    pub background_search: String,
+    pub race_search: String,
 
     // Feature interpreter — stores the structured feature currently driving an
     // "extra" builder step (FeatWeaponMastery / FeatSkillChoice).
@@ -51,8 +82,8 @@ pub struct BuilderState {
     // Background ability bonuses (+2/+1 from XPHB backgrounds)
     pub bg_ability_bonuses: [i32; 6],
     pub bg_ability_choices: Vec<BgAbilityChoice>, // Parsed choices
-    pub bg_ability_step: usize, // Which choice we are making
-    pub bg_ability_focus: usize, // Which option in current choice is selected
+    pub bg_ability_step: usize,                   // Which choice we are making
+    pub bg_ability_focus: usize,                  // Which option in current choice is selected
 
     // Abilities
     pub abilities: [i32; 6],
@@ -104,7 +135,7 @@ pub struct BuilderState {
     pub progression_table_state: TableState,
 
     // --- ABILITY SCORE METHOD FIELDS ---
-    pub ability_scores: [i32; 6],     // used by step_abilities
+    pub ability_scores: [i32; 6],      // used by step_abilities
     pub ability_method: AbilityMethod, // StandardArray / PointBuy / Manual
     pub ability_cursor: usize,         // currently highlighted ability row
 
@@ -112,6 +143,71 @@ pub struct BuilderState {
     pub equipment_options: Vec<String>, // list of option labels for the class
     pub equipment_choices: Vec<usize>,  // indices of chosen equipment options
     pub starting_gold: Option<i32>,     // if the user opts for gold instead
+
+    // --- CLASS FEATURE PANEL FIELDS ---
+    /// Index of the highlighted row in the feature list panel (titles + slot sub-rows).
+    pub feature_cursor: usize,
+    /// ListState that drives scroll position for the feature list.
+    pub feature_list_state: ratatui::widgets::ListState,
+    /// Active tab in the Class Manager right-panel: 0 = Features, 1 = Spells.
+    pub class_active_tab: usize,
+    /// Per-feature choices: key = ClassFeature.id, value = Vec of chosen strings
+    /// (weapon names, skill names, feat names, etc.).
+    pub class_feature_choices: std::collections::HashMap<i32, Vec<String>>,
+    /// ASI choices: key = character_level (4, 8, 12, 16, 20), value = description
+    /// (e.g., "+2 Intelligence" or "Feat: Tough").
+    pub asi_choices: std::collections::HashMap<i32, String>,
+    /// `Some((title, description))` while the Ctrl+K feature detail modal is open.
+    pub feature_detail_modal: Option<(String, String)>,
+    /// Scroll offset for the feature detail modal body.
+    pub feature_modal_scroll: u16,
+    /// `Some(...)` while the choice-picker modal is open.
+    /// Stores: (feature_id, slot_index, options list, current search, cursor).
+    pub feature_choice_modal: Option<FeatureChoiceModal>,
+    /// Skill choice modal state
+    pub show_skill_choice_modal: bool,
+    pub skill_choice_list_state: ListState,
+    pub skill_choice_search: String,
+    pub skill_choice_cursor: usize,
+    pub skill_choice_slot: usize, // Which skill slot (0-indexed)
+
+    // --- UNIFIED PROGRESSION MANIFEST & MODAL FIELDS ---
+    pub progression_manifest: Option<crate::models::ProgressionManifest>,
+    pub show_progression_asi_modal: bool,
+    pub show_progression_wm_modal: bool,
+    pub progression_slot_level: Option<i32>,
+    pub progression_blink_tick: u64,
+
+    // --- MULTI-STAGE ASI MODAL ---
+    /// Which stage the ASI modal is on.
+    pub asi_modal_stage: AsiModalStage,
+    /// Cursor inside the mode-selection stage (0 = Stats, 1 = Feat).
+    pub asi_mode_cursor: usize,
+    /// The two stat-slots for a +1/+1 or +2 choice.
+    /// Each is `None` (unset) or `Some(stat_index)` where 0=STR…5=CHA.
+    pub asi_stat_slots: [Option<usize>; 2],
+    /// Which of the two stat-slots is currently active (0 or 1).
+    pub asi_active_slot: usize,
+    /// Whether a stat-picker sub-list is open for the active slot.
+    pub asi_stat_picker_open: bool,
+    /// Cursor within the 6-stat picker list.
+    pub asi_stat_picker_cursor: usize,
+    /// Search string for the feat picker inside the ASI modal.
+    pub asi_feat_search: String,
+    /// Cursor within the filtered feat list in the ASI modal.
+    pub asi_feat_cursor: usize,
+}
+
+/// Tracks which stage the multi-step ASI / Feat modal is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AsiModalStage {
+    /// Stage 1: choose between Stat Improvement or General Feat.
+    #[default]
+    Mode,
+    /// Stage 2a: pick which stats to improve (+2 total across two slots).
+    Stats,
+    /// Stage 2b: pick a feat from the list.
+    Feat,
 }
 
 impl Default for BuilderState {
@@ -121,6 +217,7 @@ impl Default for BuilderState {
             name: String::new(),
             race_id: None,
             class_id: None,
+            previewed_class_id: None,
             subclass_id: None,
             bg_id: None,
             bonus_feat_id: None,
@@ -128,6 +225,9 @@ impl Default for BuilderState {
             race_skill_choice: None,
             feat_picker_search: String::new(),
             feat_picker_index: 0,
+            class_search: String::new(),
+            background_search: String::new(),
+            race_search: String::new(),
             builder_pending_feature: None,
             weapon_mastery_choices: Vec::new(),
             feat_skill_choices: Vec::new(),
@@ -176,6 +276,32 @@ impl Default for BuilderState {
             equipment_options: Vec::new(),
             equipment_choices: Vec::new(),
             starting_gold: None,
+            feature_cursor: 0,
+            feature_list_state: ListState::default().with_selected(Some(0)),
+            class_active_tab: 0,
+            class_feature_choices: std::collections::HashMap::new(),
+            asi_choices: std::collections::HashMap::new(),
+            feature_detail_modal: None,
+            feature_modal_scroll: 0,
+            feature_choice_modal: None,
+            show_skill_choice_modal: false,
+            skill_choice_list_state: ListState::default().with_selected(Some(0)),
+            skill_choice_search: String::new(),
+            skill_choice_cursor: 0,
+            skill_choice_slot: 0,
+            progression_manifest: None,
+            show_progression_asi_modal: false,
+            show_progression_wm_modal: false,
+            progression_slot_level: None,
+            progression_blink_tick: 0,
+            asi_modal_stage: AsiModalStage::Mode,
+            asi_mode_cursor: 0,
+            asi_stat_slots: [None, None],
+            asi_active_slot: 0,
+            asi_stat_picker_open: false,
+            asi_stat_picker_cursor: 0,
+            asi_feat_search: String::new(),
+            asi_feat_cursor: 0,
         }
     }
 }

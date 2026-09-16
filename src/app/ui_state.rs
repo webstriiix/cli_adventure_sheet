@@ -110,6 +110,10 @@ pub struct UiState {
     pub edit_race_index: usize,
     pub edit_class_index: usize,
     pub edit_subclass_index: usize,
+    /// `true` when the user has an explicit subclass selection (either loaded
+    /// from the character's existing subclass, or chosen by navigating the list).
+    /// When `false`, `None` is sent for `subclass_id` on save.
+    pub edit_subclass_selected: bool,
     pub edit_bg_index: usize,
     pub edit_race_state: ListState,
     pub edit_class_state: ListState,
@@ -196,6 +200,7 @@ impl Default for UiState {
             edit_race_index: 0,
             edit_class_index: 0,
             edit_subclass_index: 0,
+            edit_subclass_selected: false,
             edit_bg_index: 0,
             edit_race_state: ListState::default().with_selected(Some(0)),
             edit_class_state: ListState::default().with_selected(Some(0)),

@@ -1,111 +1,115 @@
 use crate::app::App;
 use crate::models::{CreateCharacterRequest, UpdateCharacterRequest, app_state::BuilderState};
 
+pub fn submit_character_from_builder(app: &mut App) {
+    let b = &app.builder;
 
-    pub fn submit_character_from_builder(app: &mut App,) {
-        let b = &app.builder;
+    let class_id = match b.class_id {
+        Some(id) => id,
+        None => {
+            app.status_msg = "No class selected!".to_string();
+            return;
+        }
+    };
 
-        let class_id = match b.class_id {
-            Some(id) => id,
-            None => {
-                app.status_msg = "No class selected!".to_string();
-                return;
-            }
-        };
+    // Calculate max HP: hit die + CON modifier
+    let hit_die = app
+        .classes
+        .iter()
+        .find(|c| c.id == class_id)
+        .map(|c| c.hit_die)
+        .unwrap_or(8);
+    let con_mod = (b.abilities[2] + b.bg_ability_bonuses[2] - 10).div_euclid(2);
+    let max_hp = (hit_die + con_mod).max(1);
 
-        // Calculate max HP: hit die + CON modifier
-        let hit_die = app
-            .classes
-            .iter()
-            .find(|c| c.id == class_id)
-            .map(|c| c.hit_die)
-            .unwrap_or(8);
-        let con_mod = (b.abilities[2] + b.bg_ability_bonuses[2] - 10).div_euclid(2);
-        let max_hp = (hit_die + con_mod).max(1);
+    // Pack lore into notes since the API has no dedicated fields for it
+    let notes = {
+        let mut parts = Vec::new();
+        if !b.age.is_empty() {
+            parts.push(format!("Age: {}", b.age));
+        }
+        if !b.height.is_empty() {
+            parts.push(format!("Height: {}", b.height));
+        }
+        if !b.weight.is_empty() {
+            parts.push(format!("Weight: {}", b.weight));
+        }
+        if !b.appearance.is_empty() {
+            parts.push(format!("Appearance: {}", b.appearance));
+        }
+        if !b.alignment.is_empty() {
+            parts.push(format!("Alignment: {}", b.alignment));
+        }
+        if !b.trait_text.is_empty() {
+            parts.push(format!("Personality: {}", b.trait_text));
+        }
+        if !b.ideal.is_empty() {
+            parts.push(format!("Ideal: {}", b.ideal));
+        }
+        if !b.bond.is_empty() {
+            parts.push(format!("Bond: {}", b.bond));
+        }
+        if !b.flaw.is_empty() {
+            parts.push(format!("Flaw: {}", b.flaw));
+        }
+        // Skill proficiency sekarang di-sync via endpoint /proficiencies (bukan tag notes).
+        // Tag [SKILLS:...] dipertahankan hanya sebagai legacy fallback untuk data lama.
+        let mut legacy_skills: Vec<String> = Vec::new();
+        legacy_skills.extend(b.skill_choices.iter().cloned());
+        if let Some(ref race_skill) = b.race_skill_choice {
+            legacy_skills.push(race_skill.clone());
+        }
+        legacy_skills.extend(b.feat_skill_choices.iter().cloned());
+        if !legacy_skills.is_empty() {
+            parts.push(format!("[SKILLS:{}]", legacy_skills.join(",")));
+        }
 
-        // Pack lore into notes since the API has no dedicated fields for it
-        let notes = {
-            let mut parts = Vec::new();
-            if !b.age.is_empty() {
-                parts.push(format!("Age: {}", b.age));
-            }
-            if !b.height.is_empty() {
-                parts.push(format!("Height: {}", b.height));
-            }
-            if !b.weight.is_empty() {
-                parts.push(format!("Weight: {}", b.weight));
-            }
-            if !b.appearance.is_empty() {
-                parts.push(format!("Appearance: {}", b.appearance));
-            }
-            if !b.alignment.is_empty() {
-                parts.push(format!("Alignment: {}", b.alignment));
-            }
-            if !b.trait_text.is_empty() {
-                parts.push(format!("Personality: {}", b.trait_text));
-            }
-            if !b.ideal.is_empty() {
-                parts.push(format!("Ideal: {}", b.ideal));
-            }
-            if !b.bond.is_empty() {
-                parts.push(format!("Bond: {}", b.bond));
-            }
-            if !b.flaw.is_empty() {
-                parts.push(format!("Flaw: {}", b.flaw));
-            }
-            // Collect all chosen skill proficiencies (class + race + feat)
-            let mut all_skills: Vec<String> = Vec::new();
-            all_skills.extend(b.skill_choices.iter().cloned());
-            if let Some(ref race_skill) = b.race_skill_choice {
-                all_skills.push(race_skill.clone());
-            }
-            all_skills.extend(b.feat_skill_choices.iter().cloned());
-            if !all_skills.is_empty() {
-                parts.push(format!("[SKILLS:{}]", all_skills.join(",")));
-            }
+        // NOTE: Sync ke /proficiencies akan dilakukan SETELAH karakter dibuat/diupdate,
+        // karena butuh character_id. Lakukan di akhir fungsi ini (setelah final_character).
 
-            if parts.is_empty() {
-                None
-            } else {
-                Some(parts.join("\n"))
-            }
-        };
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n"))
+        }
+    };
 
-        let req = CreateCharacterRequest {
-            name: b.name.trim().to_string(),
+    let req = CreateCharacterRequest {
+        name: b.name.trim().to_string(),
+        class_id,
+        race_id: b.race_id,
+        subrace_id: None,
+        background_id: b.bg_id,
+        strength: b.abilities[0] + b.bg_ability_bonuses[0],
+        dexterity: b.abilities[1] + b.bg_ability_bonuses[1],
+        constitution: b.abilities[2] + b.bg_ability_bonuses[2],
+        intelligence: b.abilities[3] + b.bg_ability_bonuses[3],
+        wisdom: b.abilities[4] + b.bg_ability_bonuses[4],
+        charisma: b.abilities[5] + b.bg_ability_bonuses[5],
+        max_hp,
+        bonus_feat_id: b.bonus_feat_id,
+        background_feat_id: b.background_feat_id,
+    };
+
+    let rt = app.rt.clone();
+    tracing::info!("Attempting sync for Step 5...");
+    let final_character = if let Some(draft_id) = app.builder.draft_id {
+        let update_req = UpdateCharacterRequest {
+            name: req.name.clone(),
             class_id,
-            race_id: b.race_id,
-            subrace_id: None,
-            background_id: b.bg_id,
-            strength: b.abilities[0] + b.bg_ability_bonuses[0],
-            dexterity: b.abilities[1] + b.bg_ability_bonuses[1],
-            constitution: b.abilities[2] + b.bg_ability_bonuses[2],
-            intelligence: b.abilities[3] + b.bg_ability_bonuses[3],
-            wisdom: b.abilities[4] + b.bg_ability_bonuses[4],
-            charisma: b.abilities[5] + b.bg_ability_bonuses[5],
+            strength: req.strength,
+            dexterity: req.dexterity,
+            constitution: req.constitution,
+            intelligence: req.intelligence,
+            wisdom: req.wisdom,
+            charisma: req.charisma,
             max_hp,
-            bonus_feat_id: b.bonus_feat_id,
-            background_feat_id: b.background_feat_id,
-        };
-
-        let rt = app.rt.clone();
-        let final_character = if let Some(draft_id) = app.builder.draft_id {
-            let update_req = UpdateCharacterRequest {
-                name: req.name.clone(),
-                class_id,
-                strength: req.strength,
-                dexterity: req.dexterity,
-                constitution: req.constitution,
-                intelligence: req.intelligence,
-                wisdom: req.wisdom,
-                charisma: req.charisma,
-                max_hp,
             // runtime fields required by server validation
             current_hp: Some(max_hp),
             temp_hp: Some(0),
             inspiration: Some(false),
             notes: notes.clone(),
-            experience_pts: Some(0),
+            experience_pts: Some(crate::models::rules::xp_from_level(app.builder.level)),
             race_id: req.race_id,
             subrace_id: req.subrace_id,
             background_id: req.background_id,
@@ -113,83 +117,96 @@ use crate::models::{CreateCharacterRequest, UpdateCharacterRequest, app_state::B
             ..Default::default()
         };
         rt.block_on(app.client.update_character(draft_id, &update_req))
-        } else {
-            match rt.block_on(app.client.create_character(&req)) {
-                Ok(c) => {
-                    if let Some(ref notes_text) = notes {
-                        let update = UpdateCharacterRequest {
-                            notes: Some(notes_text.clone()),
-                            ..UpdateCharacterRequest::from_character(&c, class_id)
-                        };
-                        let _ = rt.block_on(app.client.update_character(c.id, &update));
-                    }
-                    Ok(c)
-                }
-                Err(e) => Err(e),
+    } else {
+        match rt.block_on(app.client.create_character(&req)) {
+            Ok(c) => {
+                let xp = crate::models::rules::xp_from_level(app.builder.level);
+                let update = UpdateCharacterRequest {
+                    notes: notes.clone(),
+                    experience_pts: Some(xp),
+                    ..UpdateCharacterRequest::from_character(&c, class_id)
+                };
+                let _ = rt.block_on(app.client.update_character(c.id, &update));
+                Ok(c)
             }
-        };
+            Err(e) => Err(e),
+        }
+    };
 
-        match final_character {
-            Ok(character) => {
-                let id = character.id;
-                app.active_class_id = class_id;
-                
-                // If subclass is selected, update subclass mapping
-                if let Some(subclass_id) = app.builder.subclass_id {
-                    let patch_req = crate::models::character::PatchCharacterClassRequest {
-                        subclass_id: Some(subclass_id),
-                        level: Some(1),
-                    };
-                    let _ = rt.block_on(app.client.patch_character_class(id, class_id, &patch_req));
+    match final_character {
+        Ok(character) => {
+            let id = character.id;
+            tracing::info!("Sync Successful for Character {id}");
+            app.active_class_id = class_id;
+
+            // Update primary class level and subclass if level is elevated or subclass is selected
+            if app.builder.level > 1 || app.builder.subclass_id.is_some() {
+                let patch_req = crate::models::character::PatchCharacterClassRequest {
+                    subclass_id: app.builder.subclass_id,
+                    level: Some(app.builder.level),
+                };
+                let _ = rt.block_on(app.client.patch_character_class(id, class_id, &patch_req));
+            }
+            // Add starting equipment (option A = standard package)
+            if app.builder.equipment_option == Some(0) {
+                let mut items_to_add: Vec<(String, i32)> = Vec::new();
+
+                // From class
+                if let Some(class) = app.classes.iter().find(|c| c.id == class_id) {
+                    let mut class_items =
+                        App::parse_starting_equipment_items(&class.starting_equipment);
+                    items_to_add.append(&mut class_items);
                 }
-                // Add starting equipment (option A = standard package)
-                if app.builder.equipment_option == Some(0) {
-                    let mut items_to_add: Vec<(String, i32)> = Vec::new();
 
-                    // From class
-                    if let Some(class) = app.classes.iter().find(|c| c.id == class_id) {
-                        let mut class_items =
-                            App::parse_starting_equipment_items(&class.starting_equipment);
-                        items_to_add.append(&mut class_items);
-                    }
-
-                    // From background
-                    if let Some(bg_id) = app.builder.bg_id {
-                        if let Some(bg) = app.backgrounds.iter().find(|b| b.id == bg_id) {
-                            if let Some(eq) = &bg.starting_equipment {
-                                // Background format is an array of choice objects
-                                let wrapped = serde_json::json!({ "defaultData": eq });
-                                let mut bg_items = App::parse_starting_equipment_items(&wrapped);
-                                items_to_add.append(&mut bg_items);
-                            }
+                // From background
+                if let Some(bg_id) = app.builder.bg_id {
+                    if let Some(bg) = app.backgrounds.iter().find(|b| b.id == bg_id) {
+                        if let Some(eq) = &bg.starting_equipment {
+                            // Background format is an array of choice objects
+                            let wrapped = serde_json::json!({ "defaultData": eq });
+                            let mut bg_items = App::parse_starting_equipment_items(&wrapped);
+                            items_to_add.append(&mut bg_items);
                         }
                     }
-
-                    if !items_to_add.is_empty() {
-                        app.add_starting_items(&rt, id, &items_to_add);
-                    }
                 }
 
-                // Add selected spells
-                // Note: We use app.builder.known_spells which stores the IDs selected in Step 7.
-                // For prepared casters (Paladin, Cleric), these count as their initially prepared spells.
-                // For known casters (Bard, Sorcerer), these are their known spells.
-                // We set is_prepared=true for convenience.
-                for spell_id in &app.builder.known_spells {
-                    let req = crate::models::character::AddSpellRequest {
-                        spell_id: *spell_id,
-                        is_prepared: Some(true),
-                    };
-                    let _ = rt.block_on(app.client.add_spell(id, &req));
+                if !items_to_add.is_empty() {
+                    app.add_starting_items(&rt, id, &items_to_add);
                 }
+            }
 
-                app.builder = BuilderState::default();
-                app.fetch_characters();
-                app.load_character_sheet(id);
+            // Add selected spells
+            // Note: We use app.builder.known_spells which stores the IDs selected in Step 7.
+            // For prepared casters (Paladin, Cleric), these count as their initially prepared spells.
+            // For known casters (Bard, Sorcerer), these are their known spells.
+            // We set is_prepared=true for convenience.
+            for spell_id in &app.builder.known_spells {
+                let req = crate::models::character::AddSpellRequest {
+                    spell_id: *spell_id,
+                    is_prepared: Some(true),
+                };
+                let _ = rt.block_on(app.client.add_spell(id, &req));
             }
-            Err(e) => {
-                app.status_msg = format!("Failed to create character: {e}");
-            }
+
+            // === SYNC SKILL PROFICIENCIES KE BACKEND ===
+            // Kirim skill ke tabel character_proficiencies (bukan tag notes lagi).
+            app.sync_skill_proficiencies_to_backend(character.id);
+
+            app.builder = BuilderState::default();
+            app.fetch_characters();
+            app.load_character_sheet(id);
         }
-
+        Err(e) => {
+            let (status_code, error_text) = match &e {
+                crate::client::ApiError::Api { status, message } => (*status, message.clone()),
+                crate::client::ApiError::Request(err) => (
+                    err.status().map(|s| s.as_u16()).unwrap_or(0),
+                    err.to_string(),
+                ),
+                crate::client::ApiError::Parse(err) => (0, err.clone()),
+            };
+            tracing::error!("Sync Failed: {status_code} - {error_text}");
+            app.status_msg = format!("Failed to create character: {e}");
+        }
+    }
 }

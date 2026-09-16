@@ -2,6 +2,7 @@ use crate::App;
 use crate::models::app_state::PickerMode;
 use crate::models::character::{AsiChoiceRequest, Character};
 use crate::models::compendium::Feat;
+use crate::models::{DecisionPointChoice, DecisionStatus};
 
 impl App {
     pub fn expend_selected_feat(&mut self, change: i32) {
@@ -78,9 +79,12 @@ impl App {
     }
 
     pub fn confirm_asi_choice(&mut self) {
-        let character = match &self.active_character {
-            Some(c) => c.clone(),
-            None => return,
+        let char_id = self
+            .builder
+            .draft_id
+            .or_else(|| self.active_character.as_ref().map(|c| c.id));
+        let Some(char_id) = char_id else {
+            return;
         };
 
         let ability_keys = ["str", "dex", "con", "int", "wis", "cha"];
@@ -107,7 +111,7 @@ impl App {
         };
 
         let rt = self.rt.clone();
-        match rt.block_on(self.client.post_asi_choice(character.id, &req)) {
+        match rt.block_on(self.client.post_asi_choice(char_id, &req)) {
             Ok(updated_char) => {
                 let label = format!(
                     "+1 {} and +1 {}",
@@ -115,6 +119,31 @@ impl App {
                     crate::models::rules::ABILITY_NAMES[self.asi_ability_b],
                 );
                 self.active_character = Some(updated_char);
+
+                let lvl = self.builder.progression_slot_level.unwrap_or_else(|| {
+                    self.active_character
+                        .as_ref()
+                        .map(|c| c.level())
+                        .unwrap_or(self.builder.level)
+                });
+                self.builder.asi_choices.insert(lvl, label.clone());
+
+                if let Some(ref mut manifest) = self.builder.progression_manifest {
+                    if let Some(dp) = manifest
+                        .decision_points
+                        .iter_mut()
+                        .find(|dp| dp.level == lvl && dp.choice_type == "asi")
+                    {
+                        dp.status = DecisionStatus::Complete;
+                        dp.current_choices = vec![DecisionPointChoice {
+                            id: "asi".to_string(),
+                            description: label.clone(),
+                        }];
+                    }
+                }
+
+                self.refresh_progression_manifest();
+
                 self.status_msg = format!("ASI applied: {}", label);
                 self.picker_mode = PickerMode::None;
             }
@@ -126,12 +155,15 @@ impl App {
 
     /// Confirm a feat pick from the ASI/Feat choice overlay.
     pub fn confirm_feat_asi_choice(&mut self) {
-        let character = match &self.active_character {
-            Some(c) => c.clone(),
-            None => return,
+        let char_id = self
+            .builder
+            .draft_id
+            .or_else(|| self.active_character.as_ref().map(|c| c.id));
+        let Some(char_id) = char_id else {
+            return;
         };
 
-        let filtered = self.filtered_feats(Some(character.clone()), None);
+        let filtered = self.filtered_feats(self.active_character.clone(), None);
         if filtered.is_empty() {
             return;
         }
@@ -149,15 +181,39 @@ impl App {
         };
 
         let rt = self.rt.clone();
-        match rt.block_on(self.client.post_asi_choice(character.id, &req)) {
+        match rt.block_on(self.client.post_asi_choice(char_id, &req)) {
             Ok(updated_char) => {
                 let name = self.feat_name(feat_id);
                 self.active_character = Some(updated_char);
                 // Refresh feats list
-                let char_id = character.id;
                 if let Ok(feats) = rt.block_on(self.client.get_feats(char_id)) {
                     self.char_feats = feats;
                 }
+
+                let lvl = self.builder.progression_slot_level.unwrap_or_else(|| {
+                    self.active_character
+                        .as_ref()
+                        .map(|c| c.level())
+                        .unwrap_or(self.builder.level)
+                });
+                self.builder.asi_choices.insert(lvl, name.clone());
+
+                if let Some(ref mut manifest) = self.builder.progression_manifest {
+                    if let Some(dp) = manifest
+                        .decision_points
+                        .iter_mut()
+                        .find(|dp| dp.level == lvl && dp.choice_type == "asi")
+                    {
+                        dp.status = DecisionStatus::Complete;
+                        dp.current_choices = vec![DecisionPointChoice {
+                            id: feat_id.to_string(),
+                            description: name.clone(),
+                        }];
+                    }
+                }
+
+                self.refresh_progression_manifest();
+
                 self.status_msg = format!("Feat chosen: {name}");
                 self.picker_mode = PickerMode::None;
             }
@@ -171,7 +227,7 @@ impl App {
     pub fn asi_levels_for_class(class_name: &str) -> &'static [i32] {
         match class_name.to_lowercase().as_str() {
             "fighter" => &[4, 6, 8, 12, 14, 16, 19],
-            "rogue" => &[4, 8, 10, 12, 16, 18],
+            "rogue" => &[4, 8, 10, 12, 16, 19],
             _ => &[4, 8, 12, 16, 19],
         }
     }

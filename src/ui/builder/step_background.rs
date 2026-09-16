@@ -8,11 +8,11 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BgFocus {
     Name,
     Personality,
+    BackgroundSearch,
     BackgroundList,
 }
 
@@ -20,12 +20,14 @@ fn get_focus(app: &App) -> BgFocus {
     match app.builder.focus_index {
         0 => BgFocus::Name,
         1 => BgFocus::Personality,
+        2 => BgFocus::BackgroundSearch,
         _ => BgFocus::BackgroundList,
     }
 }
 
 pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
-    let body = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(area);
+    let body =
+        Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(area);
 
     // ── Left: Form fields ──
     let form = Layout::vertical([
@@ -48,13 +50,24 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
         app.builder.name.clone()
     };
     let name_border_style = if name_focused {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     };
     let name_p = Paragraph::new(name_display)
-        .block(Block::default().borders(Borders::ALL).title(" Character Name * ").border_style(name_border_style))
-        .style(if name_focused { Style::default().fg(Color::White) } else { Style::default().fg(Color::Gray) });
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Character Name * ")
+                .border_style(name_border_style),
+        )
+        .style(if name_focused {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::Gray)
+        });
     frame.render_widget(name_p, form[0]);
 
     // Personality field
@@ -67,22 +80,40 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
         app.builder.trait_text.clone()
     };
     let per_border_style = if per_focused {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     };
     let per_p = Paragraph::new(per_display)
-        .block(Block::default().borders(Borders::ALL).title(" Personality ").border_style(per_border_style))
-        .style(if per_focused { Style::default().fg(Color::White) } else { Style::default().fg(Color::DarkGray) })
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Personality ")
+                .border_style(per_border_style),
+        )
+        .style(if per_focused {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        })
         .wrap(Wrap { trim: true });
     frame.render_widget(per_p, form[1]);
 
     // Feat chosen indicator
     let feat_text = if let Some(feat_id) = app.builder.background_feat_id {
-        let feat_name = app.all_feats.iter().find(|f| f.id == feat_id).map(|f| f.name.as_str()).unwrap_or("Unknown");
+        let feat_name = app
+            .all_feats
+            .iter()
+            .find(|f| f.id == feat_id)
+            .map(|f| f.name.as_str())
+            .unwrap_or("Unknown");
         format!("Origin Feat: {} ✓\nPress 'F' to change", feat_name)
     } else {
-        let bg_grants_feat = app.builder.bg_id
+        let bg_grants_feat = app
+            .builder
+            .bg_id
             .and_then(|id| app.backgrounds.iter().find(|b| b.id == id))
             .map(|b| b.grants_bonus_feat)
             .unwrap_or(false);
@@ -93,37 +124,116 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
         }
     };
     let feat_p = Paragraph::new(feat_text)
-        .block(Block::default().borders(Borders::ALL).title(" Origin Feat ").border_style(Style::default().fg(Color::DarkGray)))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Origin Feat ")
+                .border_style(Style::default().fg(Color::DarkGray)),
+        )
         .style(Style::default().fg(Color::DarkGray))
         .wrap(Wrap { trim: true });
     frame.render_widget(feat_p, form[2]);
 
-    // ── Right: Background list ──
+    // ── Right: Search + Background list ──
+    let right_layout = Layout::vertical([
+        Constraint::Length(3), // Search Box
+        Constraint::Min(0),    // List
+    ])
+    .split(body[1]);
+
+    let bg_search_focused = focus == BgFocus::BackgroundSearch;
     let bg_list_focused = focus == BgFocus::BackgroundList;
-    let items: Vec<ListItem> = app.backgrounds.iter().map(|bg| {
-        let is_selected = Some(bg.id) == app.builder.bg_id;
-        let name_style = if is_selected {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-        } else {
+
+    let query = app.builder.background_search.to_lowercase();
+    let filtered: Vec<&crate::models::compendium::Background> = app
+        .backgrounds
+        .iter()
+        .filter(|bg| query.is_empty() || bg.name.to_lowercase().contains(&query))
+        .collect();
+
+    // Clamp and check selected background selection
+    let selected_idx = app
+        .builder
+        .list_state
+        .selected()
+        .map(|i| i.min(filtered.len().saturating_sub(1)));
+    if selected_idx != app.builder.list_state.selected() {
+        app.builder.list_state.select(selected_idx);
+    }
+
+    // Search bar
+    let search_border_style = if bg_search_focused {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let search_text = if bg_search_focused {
+        format!("{}█", app.builder.background_search)
+    } else if app.builder.background_search.is_empty() {
+        "(type to search...)".to_string()
+    } else {
+        app.builder.background_search.clone()
+    };
+    let search_p = Paragraph::new(search_text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Search Background (Tab) ")
+                .border_style(search_border_style),
+        )
+        .style(if bg_search_focused {
             Style::default().fg(Color::White)
-        };
-        let mut spans = vec![Span::styled(bg.name.clone(), name_style)];
-        if bg.grants_bonus_feat {
-            spans.push(Span::styled(" [+Feat]", Style::default().fg(Color::Yellow)));
-        }
-        ListItem::new(Line::from(spans))
-    }).collect();
+        } else {
+            Style::default().fg(Color::Gray)
+        });
+    frame.render_widget(search_p, right_layout[0]);
+
+    // Background list
+    let items: Vec<ListItem> = filtered
+        .iter()
+        .map(|bg| {
+            let is_selected = Some(bg.id) == app.builder.bg_id;
+            let name_style = if is_selected {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            let source_lbl = crate::models::compendium::source_id_label(bg.source_id);
+            let name_with_source = format!("{} ({})", bg.name, source_lbl);
+            let mut spans = vec![Span::styled(name_with_source, name_style)];
+            if bg.grants_bonus_feat {
+                spans.push(Span::styled(" [+Feat]", Style::default().fg(Color::Yellow)));
+            }
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
 
     let bg_border = if bg_list_focused {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     };
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(" Select Background (Tab to focus) ").border_style(bg_border))
-        .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Select Background (Tab to focus) ")
+                .border_style(bg_border),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Cyan)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_symbol(">> ");
-    frame.render_stateful_widget(list, body[1], &mut app.builder.list_state);
+    frame.render_stateful_widget(list, right_layout[1], &mut app.builder.list_state);
 }
 
 pub fn handle_key(app: &mut App, key: KeyEvent) {
@@ -131,23 +241,51 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
 
     match key.code {
         KeyCode::Esc => {
-            app.builder.step = CharacterCreationStep::Class;
-            app.builder.list_state.select(Some(0));
-            app.builder.focus_index = 0;
-            app.status_msg.clear();
+            if focus == BgFocus::BackgroundSearch && !app.builder.background_search.is_empty() {
+                app.builder.background_search.clear();
+                app.builder.list_state.select(Some(0));
+                let filtered: Vec<&crate::models::compendium::Background> = app
+                    .backgrounds
+                    .iter()
+                    .filter(|bg| {
+                        bg.name
+                            .to_lowercase()
+                            .contains(&app.builder.background_search.to_lowercase())
+                    })
+                    .collect();
+                if let Some(bg) = filtered.first() {
+                    app.builder.bg_id = Some(bg.id);
+                }
+            } else {
+                app.builder.step = CharacterCreationStep::Class;
+                // Restore the list cursor to the class that was previously
+                // confirmed so the progression tree renders correctly.
+                let saved_class_id = app.builder.class_id;
+                let restore_idx = saved_class_id.and_then(|id| {
+                    app.classes.iter().position(|c| c.id == id)
+                });
+                app.builder.list_state.select(Some(restore_idx.unwrap_or(0)));
+                // Reload class detail for the restored class so Source A
+                // (static features) and the manifest refresh work correctly.
+                crate::ui::builder::step_class::load_class_detail_for_current(app);
+                app.builder.focus_index = 0;
+                app.status_msg.clear();
+            }
         }
         KeyCode::Tab => {
-            app.builder.focus_index = (app.builder.focus_index + 1) % 3;
+            app.builder.focus_index = (app.builder.focus_index + 1) % 4;
         }
         KeyCode::BackTab => {
             if app.builder.focus_index == 0 {
-                app.builder.focus_index = 2;
+                app.builder.focus_index = 3;
             } else {
                 app.builder.focus_index -= 1;
             }
         }
         KeyCode::Char('f') | KeyCode::Char('F') => {
-            let bg_grants_feat = app.builder.bg_id
+            let bg_grants_feat = app
+                .builder
+                .bg_id
                 .and_then(|id| app.backgrounds.iter().find(|b| b.id == id))
                 .map(|b| b.grants_bonus_feat)
                 .unwrap_or(false);
@@ -156,7 +294,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 app.builder.feat_list_state.select(Some(0));
                 app.builder.feat_picker_search.clear();
             } else {
-                app.status_msg = "Select a background that grants an Origin Feat first.".to_string();
+                app.status_msg =
+                    "Select a background that grants an Origin Feat first.".to_string();
             }
         }
         KeyCode::Enter => {
@@ -165,7 +304,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                     app.builder.focus_index = 1; // Move to personality
                 }
                 BgFocus::Personality => {
-                    app.builder.focus_index = 2; // Move to background list
+                    app.builder.focus_index = 2; // Move to background search
+                }
+                BgFocus::BackgroundSearch => {
+                    app.builder.focus_index = 3; // Move to background list
                 }
                 BgFocus::BackgroundList => {
                     // Validate
@@ -176,12 +318,16 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                     }
 
                     // Check if selected background grants feat and we haven't chosen one yet
-                    let bg_grants_feat = app.builder.bg_id
+                    let bg_grants_feat = app
+                        .builder
+                        .bg_id
                         .and_then(|id| app.backgrounds.iter().find(|b| b.id == id))
                         .map(|b| b.grants_bonus_feat)
                         .unwrap_or(false);
                     if bg_grants_feat && app.builder.background_feat_id.is_none() {
-                        app.status_msg = "This background grants an Origin Feat — press 'F' to choose it!".to_string();
+                        app.status_msg =
+                            "This background grants an Origin Feat — press 'F' to choose it!"
+                                .to_string();
                         app.builder.show_feat_modal = true;
                         app.builder.feat_list_state.select(Some(0));
                         return;
@@ -198,40 +344,102 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
-        // Text input for Name and Personality
+        // Text input for Name, Personality and BackgroundSearch
         KeyCode::Backspace => match focus {
-            BgFocus::Name => { app.builder.name.pop(); }
-            BgFocus::Personality => { app.builder.trait_text.pop(); }
+            BgFocus::Name => {
+                app.builder.name.pop();
+            }
+            BgFocus::Personality => {
+                app.builder.trait_text.pop();
+            }
+            BgFocus::BackgroundSearch => {
+                app.builder.background_search.pop();
+                app.builder.list_state.select(Some(0));
+                let query = app.builder.background_search.to_lowercase();
+                let filtered: Vec<&crate::models::compendium::Background> = app
+                    .backgrounds
+                    .iter()
+                    .filter(|bg| query.is_empty() || bg.name.to_lowercase().contains(&query))
+                    .collect();
+                if let Some(bg) = filtered.first() {
+                    app.builder.bg_id = Some(bg.id);
+                } else {
+                    app.builder.bg_id = None;
+                }
+            }
             BgFocus::BackgroundList => {}
         },
         KeyCode::Char(c) => match focus {
-            BgFocus::Name => { app.builder.name.push(c); }
-            BgFocus::Personality => { app.builder.trait_text.push(c); }
+            BgFocus::Name => {
+                app.builder.name.push(c);
+            }
+            BgFocus::Personality => {
+                app.builder.trait_text.push(c);
+            }
+            BgFocus::BackgroundSearch => {
+                app.builder.background_search.push(c);
+                app.builder.list_state.select(Some(0));
+                let query = app.builder.background_search.to_lowercase();
+                let filtered: Vec<&crate::models::compendium::Background> = app
+                    .backgrounds
+                    .iter()
+                    .filter(|bg| query.is_empty() || bg.name.to_lowercase().contains(&query))
+                    .collect();
+                if let Some(bg) = filtered.first() {
+                    app.builder.bg_id = Some(bg.id);
+                } else {
+                    app.builder.bg_id = None;
+                }
+            }
             BgFocus::BackgroundList => {}
         },
         // Background list navigation (only when focused on list)
         KeyCode::Up => {
             if focus == BgFocus::BackgroundList {
-                let i = app.builder.list_state.selected()
-                    .map(|i| if i > 0 { i - 1 } else { app.backgrounds.len().saturating_sub(1) })
-                    .unwrap_or(0);
-                app.builder.list_state.select(Some(i));
-                // Auto-select on hover
-                if let Some(bg) = app.backgrounds.get(i) {
-                    app.builder.bg_id = Some(bg.id);
+                let query = app.builder.background_search.to_lowercase();
+                let filtered: Vec<&crate::models::compendium::Background> = app
+                    .backgrounds
+                    .iter()
+                    .filter(|bg| query.is_empty() || bg.name.to_lowercase().contains(&query))
+                    .collect();
+                let len = filtered.len();
+                if len > 0 {
+                    let i = app
+                        .builder
+                        .list_state
+                        .selected()
+                        .map(|i| if i > 0 { i - 1 } else { len.saturating_sub(1) })
+                        .unwrap_or(0);
+                    app.builder.list_state.select(Some(i));
+                    // Auto-select on hover
+                    if let Some(bg) = filtered.get(i) {
+                        app.builder.bg_id = Some(bg.id);
+                    }
                 }
             }
         }
         KeyCode::Down => {
             if focus == BgFocus::BackgroundList {
-                let i = app.builder.list_state.selected()
-                    .map(|i| if i + 1 < app.backgrounds.len() { i + 1 } else { 0 })
-                    .unwrap_or(0);
-                app.builder.list_state.select(Some(i));
-                if let Some(bg) = app.backgrounds.get(i) {
-                    app.builder.bg_id = Some(bg.id);
-                    // Reset feat if background changed
-                    app.builder.background_feat_id = None;
+                let query = app.builder.background_search.to_lowercase();
+                let filtered: Vec<&crate::models::compendium::Background> = app
+                    .backgrounds
+                    .iter()
+                    .filter(|bg| query.is_empty() || bg.name.to_lowercase().contains(&query))
+                    .collect();
+                let len = filtered.len();
+                if len > 0 {
+                    let i = app
+                        .builder
+                        .list_state
+                        .selected()
+                        .map(|i| if i + 1 < len { i + 1 } else { 0 })
+                        .unwrap_or(0);
+                    app.builder.list_state.select(Some(i));
+                    if let Some(bg) = filtered.get(i) {
+                        app.builder.bg_id = Some(bg.id);
+                        // Reset feat if background changed
+                        app.builder.background_feat_id = None;
+                    }
                 }
             }
         }

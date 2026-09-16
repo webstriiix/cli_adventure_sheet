@@ -16,6 +16,19 @@ use app::App;
 use client::ApiClient;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Ensure logs directory exists
+    std::fs::create_dir_all("logs")?;
+
+    // Set up non-blocking file appender that writes to logs/tui.log in append mode
+    let file_appender = tracing_appender::rolling::never("logs", "tui.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    // Initialize formatting subscriber to write to the file only without ANSI colors
+    tracing_subscriber::fmt()
+        .with_writer(non_blocking)
+        .with_ansi(false)
+        .init();
+
     // Create a tokio runtime for async API calls (separate from the main thread)
     let rt = tokio::runtime::Runtime::new()?;
 

@@ -25,4 +25,14 @@ pub enum Feature {
 
     /// This feature grants a specific spell that is always prepared.
     GrantsSpell { spell_name: String },
+
+    /// This feature grants spell choices with filtering criteria.
+    /// Used for features like "Evocation Savant" that let you choose spells
+    /// from a specific school with level restrictions.
+    Spells {
+        choose: u8,
+        school: Option<String>,      // Optional spell school filter (e.g., "evocation")
+        max_level: Option<u8>,       // Optional maximum spell level
+        class: Option<String>,       // Optional class filter (e.g., "wizard")
+    },
 }

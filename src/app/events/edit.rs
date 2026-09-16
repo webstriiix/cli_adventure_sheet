@@ -103,6 +103,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
                     .unwrap_or(0);
                 let idx = app.edit_subclass_index;
                 app.edit_subclass_state.select(Some(idx));
+                // Only pre-select if the character actually has a subclass for this class.
+                app.edit_subclass_selected = current_subclass_id.is_some();
                 app.class_detail = Some(detail);
             }
         }
@@ -152,6 +154,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
                     // Reset subclass when class changes
                     app.class_detail = None;
                     app.edit_subclass_index = 0;
+                    app.edit_subclass_selected = false;
                     app.edit_subclass_state.select(Some(0));
                 }
             }
@@ -163,6 +166,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
                     // Reset subclass when class changes
                     app.class_detail = None;
                     app.edit_subclass_index = 0;
+                    app.edit_subclass_selected = false;
                     app.edit_subclass_state.select(Some(0));
                 }
             }
@@ -190,6 +194,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
                     app.edit_subclass_index -= 1;
                     let idx = app.edit_subclass_index;
                     app.edit_subclass_state.select(Some(idx));
+                    app.edit_subclass_selected = true;
                 }
             }
             KeyCode::Down => {
@@ -197,6 +202,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
                     app.edit_subclass_index += 1;
                     let idx = app.edit_subclass_index;
                     app.edit_subclass_state.select(Some(idx));
+                    app.edit_subclass_selected = true;
                 }
             }
             KeyCode::Tab => {
@@ -359,9 +365,32 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
             auto_max_hp.unwrap_or_else(|| parse_i32(&app.edit_buffers[3]).unwrap_or_default());
 
         let name = app.edit_buffers[0].trim().to_string();
-        let subclass_id = app.class_detail.as_ref().and_then(|d| {
-            d.subclasses.get(app.edit_subclass_index).map(|swf| swf.subclass.id)
-        });
+
+        // Determine the subclass gate level from class data (default 3 for all 5.5e classes).
+        let subclass_gate = app.class_detail.as_ref()
+            .and_then(|d| d.features.iter().find(|f| f.is_subclass_gate).map(|f| f.level))
+            .unwrap_or(3);
+
+        // Only include subclass_id if the user has an explicit selection AND the character
+        // meets the gate level. If they're too low, force None and tell them why.
+        let mut subclass_level_warning: Option<String> = None;
+        let subclass_id: Option<i32> = if app.edit_subclass_selected {
+            if new_level >= subclass_gate {
+                app.class_detail.as_ref().and_then(|d| {
+                    d.subclasses.get(app.edit_subclass_index).map(|swf| swf.subclass.id)
+                })
+            } else {
+                // Below the gate — block the selection silently and warn on save.
+                app.edit_subclass_selected = false;
+                subclass_level_warning = Some(format!(
+                    "Subclass not applied: {} subclass unlocks at level {} (you are level {}).",
+                    app.char_class_name, subclass_gate, new_level
+                ));
+                None
+            }
+        } else {
+            None
+        };
 
         let req = UpdateCharacterRequest {
             name,
@@ -431,7 +460,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
                         app.edit_buffers[3] = updated.max_hp.to_string();
                     }
 
-                    // Update local subclass state immediately from the server response
+                    // Update local subclass state immediately
                     if let Some(cc) = app.char_classes.first_mut() {
                         cc.subclass_id = subclass_id;
                     }
@@ -446,6 +475,24 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
                         app.check_level_up_prompts(old_level, new_level);
                     }
                 }
+
+                // Patch the class record when the level changed so the backend
+                // keeps its class-level in sync with the character's XP-derived level.
+                if new_level != old_level {
+                    let patch_req = crate::models::character::PatchCharacterClassRequest {
+                        level: Some(new_level),
+                        subclass_id: None, // subclass already handled in the PUT above
+                    };
+                    if let Err(e) = rt.block_on(app.client.patch_character_class(id, class_id, &patch_req)) {
+                        app.status_msg = format!("Save failed: {e}");
+                        return;
+                    }
+                    // Sync local class level
+                    if let Some(cc) = app.char_classes.first_mut() {
+                        cc.level = new_level;
+                    }
+                }
+
                 app.fetch_characters();
 
                 // If there are level-up prompts, stay in EditCharacter and show the first one
@@ -454,7 +501,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
                     return;
                 }
 
-                app.status_msg = "Saved!".to_string();
+                app.status_msg = if let Some(warn) = subclass_level_warning {
+                    format!("Saved! ⚠ {}", warn)
+                } else {
+                    "Saved!".to_string()
+                };
                 app.screen = if app.edit_return_to_sheet {
                     Screen::CharacterSheet
                 } else {
