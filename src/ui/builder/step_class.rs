@@ -140,9 +140,30 @@ fn canonical_asi_levels(class_name: &str) -> &'static [i32] {
     }
 }
 
+pub const ALL_SKILLS: [&str; 18] = [
+    "Acrobatics",
+    "Animal Handling",
+    "Arcana",
+    "Athletics",
+    "Deception",
+    "History",
+    "Insight",
+    "Intimidation",
+    "Investigation",
+    "Medicine",
+    "Nature",
+    "Perception",
+    "Performance",
+    "Persuasion",
+    "Religion",
+    "Sleight of Hand",
+    "Stealth",
+    "Survival",
+];
+
 // ── Skill-choice parser ───────────────────────────────────────────────────────
 // Returns (count_to_choose, allowed_skill_names) from the class skill_choices JSON.
-// The JSON shape is: [{ "choose": 2, "from": ["arcana", "history", ...] }]
+// Supports both 2014 (PHB) and 2024 (XPHB) schema variations.
 pub fn parse_skill_choices_pub(class: &crate::models::Class) -> (usize, Vec<String>) {
     parse_skill_choices(class)
 }
@@ -153,21 +174,60 @@ fn parse_skill_choices(class: &crate::models::Class) -> (usize, Vec<String>) {
         _ => return (0, Vec::new()),
     };
     let entry = &arr[0]; // classes have one skill-choice block
-    let choose = entry.get("choose").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let from: Vec<String> = entry
-        .get("from")
-        .and_then(|v| v.as_array())
+
+    // 1. Ekstrak count (dukung format 2014 & 2024)
+    let choose_count = if let Some(n) = entry.get("choose").and_then(|v| v.as_u64()) {
+        n as usize
+    } else if let Some(choose_obj) = entry.get("choose").and_then(|v| v.as_object()) {
+        choose_obj
+            .get("count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize
+    } else if let Some(n) = entry.get("count").and_then(|v| v.as_u64()) {
+        n as usize
+    } else {
+        0
+    };
+
+    // 2. Ekstrak array `from` (bisa di root entry atau di dalam obj `choose`)
+    let from_array = entry.get("from").and_then(|v| v.as_array()).or_else(|| {
+        entry
+            .get("choose")
+            .and_then(|v| v.as_object())
+            .and_then(|obj| obj.get("from"))
+            .and_then(|v| v.as_array())
+    });
+
+    let from: Vec<String> = from_array
         .map(|arr| {
-            arr.iter()
-                .filter_map(|v| {
-                    v.as_str()
-                        .or_else(|| v.get("name").and_then(|n| n.as_str()))
-                        .map(|s| title_case(s))
-                })
-                .collect()
+            let mut list = Vec::new();
+            for v in arr {
+                let name_str = v
+                    .as_str()
+                    .or_else(|| v.get("name").and_then(|n| n.as_str()));
+                if let Some(s) = name_str {
+                    if s.eq_ignore_ascii_case("any") {
+                        for &sk in &ALL_SKILLS {
+                            if !list
+                                .iter()
+                                .any(|existing: &String| existing.eq_ignore_ascii_case(sk))
+                            {
+                                list.push(sk.to_string());
+                            }
+                        }
+                    } else {
+                        let formatted = title_case(s);
+                        if !list.contains(&formatted) {
+                            list.push(formatted);
+                        }
+                    }
+                }
+            }
+            list
         })
         .unwrap_or_default();
-    (choose, from)
+
+    (choose_count, from)
 }
 
 // ── Core build function ───────────────────────────────────────────────────────
@@ -1608,11 +1668,21 @@ pub fn load_class_detail_for_current(app: &mut App) {
 
 /// Convert an ASCII identifier like "intelligence" → "Intelligence".
 fn title_case(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_uppercase().to_string() + c.as_str(),
+    for &known in &ALL_SKILLS {
+        if known.eq_ignore_ascii_case(s) {
+            return known.to_string();
+        }
     }
+    s.split_whitespace()
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Truncate a string to `max_chars`, appending "…" if it was cut.
@@ -1653,6 +1723,46 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_skill_choices_legacy_2014() {
+        let class: crate::models::Class = serde_json::from_value(json!({
+            "id": 1,
+            "name": "Rogue",
+            "source_slug": "phb",
+            "hit_die": 8,
+            "skill_choices": [{"choose": 2, "from": ["arcana", "history"]}],
+            "starting_equipment": null
+        }))
+        .unwrap();
+        let (count, options) = parse_skill_choices_pub(&class);
+        assert_eq!(count, 2);
+        assert_eq!(options, vec!["Arcana", "History"]);
+    }
+
+    #[test]
+    fn test_parse_skill_choices_xphb_2024() {
+        let class: crate::models::Class = serde_json::from_value(json!({
+            "id": 4,
+            "name": "Wizard",
+            "source_slug": "xphb",
+            "hit_die": 6,
+            "skill_choices": [{
+                "choose": {
+                    "count": 2,
+                    "from": ["arcana", "history", "insight", "investigation"]
+                }
+            }],
+            "starting_equipment": null
+        }))
+        .unwrap();
+        let (count, options) = parse_skill_choices_pub(&class);
+        assert_eq!(count, 2);
+        assert_eq!(
+            options,
+            vec!["Arcana", "History", "Insight", "Investigation"]
+        );
+    }
+
+    #[test]
     fn test_parse_skill_choices_empty() {
         let class: crate::models::Class = serde_json::from_value(json!({
             "id": 2,
@@ -1682,5 +1792,23 @@ mod tests {
         let (count, options) = parse_skill_choices_pub(&class);
         assert_eq!(count, 1);
         assert_eq!(options, vec!["Athletics", "Perception"]);
+    }
+
+    #[test]
+    fn test_parse_skill_choices_any_expands_to_all_skills() {
+        let class: crate::models::Class = serde_json::from_value(json!({
+            "id": 5,
+            "name": "Bard",
+            "source_slug": "phb",
+            "hit_die": 8,
+            "skill_choices": [{"choose": 3, "from": ["any"]}],
+            "starting_equipment": null
+        }))
+        .unwrap();
+        let (count, options) = parse_skill_choices_pub(&class);
+        assert_eq!(count, 3);
+        assert_eq!(options.len(), 18);
+        assert!(options.contains(&"Arcana".to_string()));
+        assert!(options.contains(&"Stealth".to_string()));
     }
 }

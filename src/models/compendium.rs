@@ -297,15 +297,29 @@ pub struct ClassResourceResponse {
 // ── Class display helpers ────────────────────────────────────────────────────
 
 const _KNOWN_SKILLS: &[&str] = &[
-    "Acrobatics", "Animal Handling", "Arcana", "Athletics",
-    "Deception", "History", "Insight", "Intimidation",
-    "Investigation", "Medicine", "Nature", "Perception",
-    "Performance", "Persuasion", "Religion",
-    "Sleight of Hand", "Stealth", "Survival",
+    "Acrobatics",
+    "Animal Handling",
+    "Arcana",
+    "Athletics",
+    "Deception",
+    "History",
+    "Insight",
+    "Intimidation",
+    "Investigation",
+    "Medicine",
+    "Nature",
+    "Perception",
+    "Performance",
+    "Persuasion",
+    "Religion",
+    "Sleight of Hand",
+    "Stealth",
+    "Survival",
 ];
 
 impl Class {
     /// Parses `skill_choices` (5e-tools JSON) into a human-readable summary.
+    /// Supports both 2014 (PHB) and 2024 (XPHB) schema variations.
     /// Example output: "Choose 2 from: Arcana, History, …"
     pub fn skill_choices_summary(&self) -> String {
         let arr = match self.skill_choices.as_array() {
@@ -314,24 +328,62 @@ impl Class {
         };
         let mut parts: Vec<String> = Vec::new();
         for entry in arr {
-            if let Some(choose) = entry.get("choose").and_then(|v| v.as_i64()) {
-                let from_labels: Vec<String> = entry
-                    .get("from")
-                    .and_then(|v| v.as_array())
+            let choose_count = if let Some(n) = entry.get("choose").and_then(|v| v.as_i64()) {
+                n as usize
+            } else if let Some(choose_obj) = entry.get("choose").and_then(|v| v.as_object()) {
+                choose_obj
+                    .get("count")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0) as usize
+            } else if let Some(n) = entry.get("count").and_then(|v| v.as_i64()) {
+                n as usize
+            } else {
+                0
+            };
+
+            if choose_count > 0 {
+                let from_array = entry.get("from").and_then(|v| v.as_array()).or_else(|| {
+                    entry
+                        .get("choose")
+                        .and_then(|v| v.as_object())
+                        .and_then(|obj| obj.get("from"))
+                        .and_then(|v| v.as_array())
+                });
+
+                let from_labels: Vec<String> = from_array
                     .map(|arr| {
                         arr.iter()
                             .filter_map(|v| {
                                 v.as_str()
                                     .or_else(|| v.get("name").and_then(|n| n.as_str()))
-                                    .map(|s| s.to_string())
+                                    .map(|s| {
+                                        s.split_whitespace()
+                                            .map(|w| {
+                                                let mut c = w.chars();
+                                                match c.next() {
+                                                    None => String::new(),
+                                                    Some(f) => {
+                                                        f.to_uppercase().collect::<String>()
+                                                            + c.as_str()
+                                                    }
+                                                }
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join(" ")
+                                    })
                             })
                             .collect()
                     })
                     .unwrap_or_default();
+
                 if from_labels.is_empty() {
-                    parts.push(format!("Choose {}", choose));
+                    parts.push(format!("Choose {}", choose_count));
                 } else {
-                    parts.push(format!("Choose {} from: {}", choose, from_labels.join(", ")));
+                    parts.push(format!(
+                        "Choose {} from: {}",
+                        choose_count,
+                        from_labels.join(", ")
+                    ));
                 }
             }
         }
@@ -343,12 +395,10 @@ impl Class {
         let val = &self.starting_equipment;
 
         // 5e-tools "defaultData" wrapper
-        let data = val
-            .get("defaultData")
-            .or_else(|| {
-                // Also try direct array
-                if val.is_array() { Some(val) } else { None }
-            });
+        let data = val.get("defaultData").or_else(|| {
+            // Also try direct array
+            if val.is_array() { Some(val) } else { None }
+        });
 
         let arr = match data.and_then(|v| v.as_array()) {
             Some(a) if !a.is_empty() => a,
@@ -375,7 +425,11 @@ impl Class {
                 }
             }
         }
-        if items.is_empty() { String::new() } else { items.join(", ") }
+        if items.is_empty() {
+            String::new()
+        } else {
+            items.join(", ")
+        }
     }
 }
 

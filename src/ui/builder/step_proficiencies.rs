@@ -60,39 +60,9 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
     if let Some(c_id) = app.builder.class_id {
         if let Some(class) = app.classes.iter().find(|c| c.id == c_id) {
-            if let Some(arr) = class.skill_choices.as_array() {
-                if let Some(first) = arr.first() {
-                    if let Some(choose) = first.get("choose") {
-                        pick_count =
-                            choose.get("count").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
-                        if let Some(from) = choose.get("from").and_then(|v| v.as_array()) {
-                            for val in from {
-                                if let Some(s) = val.as_str() {
-                                    if s.to_lowercase() == "any" {
-                                        allowed_skills =
-                                            ALL_SKILLS.iter().map(|&sk| sk.to_string()).collect();
-                                    } else {
-                                        // capitalize first letter for display
-                                        let cap = s
-                                            .to_string()
-                                            .split_whitespace()
-                                            .map(|w| {
-                                                let mut c = w.chars();
-                                                match c.next() {
-                                                    None => String::new(),
-                                                    Some(f) => f.to_uppercase().chain(c).collect(),
-                                                }
-                                            })
-                                            .collect::<Vec<_>>()
-                                            .join(" ");
-                                        allowed_skills.push(cap);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            let (count, from) = crate::ui::builder::step_class::parse_skill_choices_pub(class);
+            pick_count = count;
+            allowed_skills = from;
         }
     }
 
