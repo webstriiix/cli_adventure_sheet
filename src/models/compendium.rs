@@ -242,6 +242,8 @@ pub struct Feat {
     pub id: i32,
     pub name: String,
     pub source_id: i32,
+    #[serde(default)]
+    pub source_slug: Option<String>,
     pub prerequisite: Option<JsonValue>,
     pub ability: Option<JsonValue>,
     pub entries: JsonValue,
@@ -479,6 +481,46 @@ impl ClassFeature {
 }
 
 impl Feat {
+    /// Mengekstrak minimum level yang dibutuhkan feat dari kolom JSON prerequisite.
+    /// Jika tidak ada syarat level, defaultnya adalah Level 1.
+    pub fn min_level(&self) -> i32 {
+        if let Some(reqs) = &self.prerequisite {
+            if let Some(arr) = reqs.as_array() {
+                for req in arr {
+                    // Check schema 2024 (langsung "level": 4) didalam array object
+                    if let Some(lvl) = req.get("level").and_then(|v| v.as_i64()) {
+                        return lvl as i32;
+                    }
+                    // Check schema bersarang {"level": {"level": 19}}
+                    if let Some(obj) = req.get("level").and_then(|v| v.as_object()) {
+                        if let Some(lvl) = obj.get("level").and_then(|v| v.as_i64()) {
+                            return lvl as i32;
+                        }
+                    }
+                }
+            } else if let Some(obj) = reqs.as_object() {
+                if let Some(lvl) = obj.get("level").and_then(|v| v.as_i64()) {
+                    return lvl as i32;
+                }
+                if let Some(inner) = obj.get("level").and_then(|v| v.as_object()) {
+                    if let Some(lvl) = inner.get("level").and_then(|v| v.as_i64()) {
+                        return lvl as i32;
+                    }
+                }
+            }
+        }
+        1 // Default: Origin feat (Bisa diambil kapan saja)
+    }
+
+    pub fn source_slug_str(&self) -> &str {
+        if let Some(ref slug) = self.source_slug {
+            if !slug.is_empty() {
+                return slug.as_str();
+            }
+        }
+        source_id_label(self.source_id)
+    }
+
     /// Interpret this feat's description text into a structured [`Feature`].
     ///
     /// Extracts plain strings from the `entries` JSON array, concatenates them,
@@ -561,4 +603,62 @@ pub struct Subrace {
     pub speed: Option<JsonValue>,
     pub ability_bonuses: Option<JsonValue>,
     pub entries: Option<JsonValue>,
+}
+
+// ── Unit Tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_feat_min_level_default_origin() {
+        let feat: Feat = serde_json::from_value(json!({
+            "id": 1,
+            "name": "Alert",
+            "source_id": 2,
+            "prerequisite": null,
+            "ability": null,
+            "entries": [],
+            "has_uses": false
+        }))
+        .unwrap();
+        assert_eq!(feat.min_level(), 1);
+        assert_eq!(feat.source_slug_str(), "XPHB");
+    }
+
+    #[test]
+    fn test_feat_min_level_direct_level_4() {
+        let feat: Feat = serde_json::from_value(json!({
+            "id": 2,
+            "name": "Actor",
+            "source_id": 1,
+            "source_slug": "phb",
+            "prerequisite": [{"level": 4}],
+            "ability": null,
+            "entries": [],
+            "has_uses": false
+        }))
+        .unwrap();
+        assert_eq!(feat.min_level(), 4);
+        assert_eq!(feat.source_slug_str(), "phb");
+    }
+
+    #[test]
+    fn test_feat_min_level_nested_epic_boon() {
+        let feat: Feat = serde_json::from_value(json!({
+            "id": 3,
+            "name": "Boon of Combat Prowess",
+            "source_id": 2,
+            "source_slug": "xphb",
+            "prerequisite": [{"level": {"level": 19}}],
+            "ability": null,
+            "entries": [],
+            "has_uses": false
+        }))
+        .unwrap();
+        assert_eq!(feat.min_level(), 19);
+        assert_eq!(feat.source_slug_str(), "xphb");
+    }
 }

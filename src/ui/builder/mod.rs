@@ -917,16 +917,53 @@ fn render_asi_stats_stage(app: &mut App, frame: &mut Frame, area: Rect, lvl: i32
     }
 }
 
+fn get_valid_asi_feats<'a>(
+    feats: &'a [crate::models::Feat],
+    lvl: i32,
+    search: &str,
+) -> Vec<&'a crate::models::Feat> {
+    let search = search.to_lowercase();
+    let mut valid_feats: std::collections::HashMap<String, &'a crate::models::Feat> =
+        std::collections::HashMap::new();
+
+    for f in feats.iter() {
+        // Step 1: Constraint minimum level (hanya bisa diambil jika max requirement <= lvl karakter)
+        if f.min_level() > lvl {
+            continue;
+        }
+
+        // Step 2: Pencarian
+        if !search.is_empty() && !f.name.to_lowercase().contains(&search) {
+            continue;
+        }
+
+        // Step 3: De-duplikasi berdasarkan Nama Feat
+        // Prioritaskan sumber "xphb" (2024 rules) atau edisi terbaru.
+        let lower_name = f.name.to_lowercase();
+        let current_source = f.source_slug_str().to_lowercase();
+
+        if let Some(existing) = valid_feats.get(&lower_name) {
+            let existing_source = existing.source_slug_str().to_lowercase();
+            // Timpa/replace entry lama jika yang baru adalah XPHB.
+            if current_source == "xphb" && existing_source != "xphb" {
+                valid_feats.insert(lower_name, f);
+            }
+        } else {
+            valid_feats.insert(lower_name, f);
+        }
+    }
+
+    let mut filtered: Vec<&'a crate::models::Feat> = valid_feats.into_values().collect();
+    filtered.sort_by(|a, b| a.name.cmp(&b.name));
+    filtered
+}
+
 fn render_asi_feat_stage(app: &mut App, frame: &mut Frame, area: Rect, lvl: i32) {
     let popup_area = centered_popup(area, 65, 22);
     frame.render_widget(Clear, popup_area);
 
-    let search = app.builder.asi_feat_search.to_lowercase();
-    let filtered: Vec<&crate::models::Feat> = app
-        .all_feats
-        .iter()
-        .filter(|f| search.is_empty() || f.name.to_lowercase().contains(&search))
-        .collect();
+    let search = &app.builder.asi_feat_search;
+    let filtered = get_valid_asi_feats(&app.all_feats, lvl, search);
 
     let len = filtered.len();
     // Clamp cursor and keep list_state in sync so Ratatui scrolls the viewport.
@@ -950,9 +987,17 @@ fn render_asi_feat_stage(app: &mut App, frame: &mut Frame, area: Rect, lvl: i32)
             } else {
                 Style::default().fg(Color::White)
             };
+            let source_label = f.source_slug_str();
+            let display_name =
+                if source_label.is_empty() || source_label.eq_ignore_ascii_case("Other") {
+                    f.name.clone()
+                } else {
+                    format!("{} [{}]", f.name, source_label.to_uppercase())
+                };
+
             ListItem::new(Line::from(vec![
                 Span::styled(prefix, Style::default().fg(Color::Cyan)),
-                Span::styled(f.name.clone(), style),
+                Span::styled(display_name, style),
             ]))
         })
         .collect();
@@ -1113,12 +1158,9 @@ fn handle_asi_feat_key(app: &mut App, key: KeyEvent) {
     use crate::models::app_state::AsiModalStage;
     use crossterm::event::KeyModifiers;
 
-    let search = app.builder.asi_feat_search.to_lowercase();
-    let filtered_len = app
-        .all_feats
-        .iter()
-        .filter(|f| search.is_empty() || f.name.to_lowercase().contains(&search))
-        .count();
+    let lvl = app.builder.progression_slot_level.unwrap_or(4);
+    let search = &app.builder.asi_feat_search;
+    let filtered_len = get_valid_asi_feats(&app.all_feats, lvl, search).len();
 
     match key.code {
         KeyCode::Esc => {
@@ -1249,12 +1291,9 @@ fn submit_asi_stats(app: &mut App) {
 fn submit_asi_feat(app: &mut App) {
     use crate::models::app_state::AsiModalStage;
 
-    let search = app.builder.asi_feat_search.to_lowercase();
-    let filtered: Vec<&crate::models::Feat> = app
-        .all_feats
-        .iter()
-        .filter(|f| search.is_empty() || f.name.to_lowercase().contains(&search))
-        .collect();
+    let lvl = app.builder.progression_slot_level.unwrap_or(4);
+    let search = &app.builder.asi_feat_search;
+    let filtered = get_valid_asi_feats(&app.all_feats, lvl, search);
 
     let cursor = app
         .builder
@@ -1471,5 +1510,85 @@ fn handle_feature_detail_modal_key(app: &mut App, key: KeyEvent) {
             app.builder.feature_modal_scroll = app.builder.feature_modal_scroll.saturating_add(1);
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn make_test_feat(
+        id: i32,
+        name: &str,
+        source_slug: Option<&str>,
+        prereq: Option<serde_json::Value>,
+    ) -> crate::models::Feat {
+        crate::models::Feat {
+            id,
+            name: name.to_string(),
+            source_id: 1,
+            source_slug: source_slug.map(|s| s.to_string()),
+            prerequisite: prereq,
+            ability: None,
+            entries: json!([]),
+            has_uses: false,
+        }
+    }
+
+    #[test]
+    fn test_get_valid_asi_feats_level_filtering() {
+        let feats = vec![
+            make_test_feat(1, "Alert", Some("xphb"), None), // min_level = 1
+            make_test_feat(2, "Actor", Some("xphb"), Some(json!([{"level": 4}]))), // min_level = 4
+            make_test_feat(
+                3,
+                "Boon of Combat Prowess",
+                Some("xphb"),
+                Some(json!([{"level": {"level": 19}}])),
+            ), // min_level = 19
+        ];
+
+        let filtered_lvl4 = get_valid_asi_feats(&feats, 4, "");
+        assert_eq!(filtered_lvl4.len(), 2);
+        assert!(filtered_lvl4.iter().any(|f| f.name == "Alert"));
+        assert!(filtered_lvl4.iter().any(|f| f.name == "Actor"));
+        assert!(
+            !filtered_lvl4
+                .iter()
+                .any(|f| f.name == "Boon of Combat Prowess")
+        );
+
+        let filtered_lvl19 = get_valid_asi_feats(&feats, 19, "");
+        assert_eq!(filtered_lvl19.len(), 3);
+    }
+
+    #[test]
+    fn test_get_valid_asi_feats_deduplication_prefers_xphb() {
+        let feats = vec![
+            make_test_feat(1, "Alert", Some("phb"), None),
+            make_test_feat(2, "Alert", Some("xphb"), None),
+            make_test_feat(3, "Actor", Some("phb"), None),
+        ];
+
+        let filtered = get_valid_asi_feats(&feats, 4, "");
+        assert_eq!(filtered.len(), 2);
+
+        let alert = filtered.iter().find(|f| f.name == "Alert").unwrap();
+        assert_eq!(alert.id, 2);
+        assert_eq!(alert.source_slug.as_deref(), Some("xphb"));
+    }
+
+    #[test]
+    fn test_get_valid_asi_feats_search_filter() {
+        let feats = vec![
+            make_test_feat(1, "Alert", Some("xphb"), None),
+            make_test_feat(2, "Actor", Some("xphb"), None),
+            make_test_feat(3, "Tough", Some("xphb"), None),
+        ];
+
+        let filtered = get_valid_asi_feats(&feats, 4, "act");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].name, "Actor");
     }
 }
