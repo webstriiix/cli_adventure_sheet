@@ -99,6 +99,12 @@ impl App {
             .entry(ability_keys[self.asi_ability_b].to_string())
             .or_insert(0) += 1;
 
+        let lvl = self.builder.progression_slot_level.unwrap_or_else(|| {
+            self.active_character
+                .as_ref()
+                .map(|c| c.level())
+                .unwrap_or(self.builder.level)
+        });
         let req = AsiChoiceRequest {
             bump_str: increases.get("str").copied(),
             bump_dex: increases.get("dex").copied(),
@@ -108,6 +114,7 @@ impl App {
             bump_cha: increases.get("cha").copied(),
             feat_id: None,
             source_type: None,
+            gained_at_level: Some(lvl),
         };
 
         let rt = self.rt.clone();
@@ -169,6 +176,12 @@ impl App {
         }
         let feat_id = filtered[self.picker_selected].id;
 
+        let lvl = self.builder.progression_slot_level.unwrap_or_else(|| {
+            self.active_character
+                .as_ref()
+                .map(|c| c.level())
+                .unwrap_or(self.builder.level)
+        });
         let req = AsiChoiceRequest {
             bump_str: None,
             bump_dex: None,
@@ -178,6 +191,7 @@ impl App {
             bump_cha: None,
             feat_id: Some(feat_id),
             source_type: Some(self.char_class_name.clone()),
+            gained_at_level: Some(lvl),
         };
 
         let rt = self.rt.clone();
@@ -189,14 +203,6 @@ impl App {
                 if let Ok(feats) = rt.block_on(self.client.get_feats(char_id)) {
                     self.char_feats = feats;
                 }
-
-                let lvl = self.builder.progression_slot_level.unwrap_or_else(|| {
-                    self.active_character
-                        .as_ref()
-                        .map(|c| c.level())
-                        .unwrap_or(self.builder.level)
-                });
-                self.builder.asi_choices.insert(lvl, name.clone());
 
                 if let Some(ref mut manifest) = self.builder.progression_manifest {
                     if let Some(dp) = manifest

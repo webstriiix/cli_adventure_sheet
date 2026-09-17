@@ -213,6 +213,9 @@ pub struct AsiChoiceRequest {
     pub feat_id: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
+    /// The ASI/feat level slot being filled (required by backend).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gained_at_level: Option<i32>,
 }
 
 /// PUT /characters/{id} expects the same shape as POST (required fields must be present).

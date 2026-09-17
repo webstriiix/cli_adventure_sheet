@@ -313,21 +313,48 @@ fn render_feat_modal(app: &mut App, frame: &mut Frame, area: Rect) {
     let popup_area = centered_popup(area, 65, 16);
     frame.render_widget(Clear, popup_area);
 
-    let feats = get_origin_feats(app);
-    let search = app.builder.feat_picker_search.to_lowercase();
-    let filtered: Vec<_> = feats
-        .iter()
-        .filter(|f| search.is_empty() || f.name.to_lowercase().contains(&search))
-        .collect();
+    let lvl = app.builder.progression_slot_level.unwrap_or(1);
+    let filtered = get_valid_asi_feats(
+        &app.all_feats,
+        lvl,
+        &app.builder.feat_picker_search,
+    );
+
+    // Clamp cursor to the filtered result set.
+    let len = filtered.len();
+    let cursor = app.builder.feat_list_state.selected().unwrap_or(0).min(len.saturating_sub(1));
+    app.builder.feat_list_state.select(if len == 0 { None } else { Some(cursor) });
 
     let items: Vec<ListItem> = filtered
         .iter()
-        .map(|f| ListItem::new(Line::from(Span::raw(format!("  {}", f.name)))))
+        .enumerate()
+        .map(|(i, f)| {
+            let is_cur = i == cursor;
+            let prefix = if is_cur { ">> " } else { "   " };
+            let style = if is_cur {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            let source_label = f.source_slug_str();
+            let display_name = if source_label.is_empty() || source_label.eq_ignore_ascii_case("Other") {
+                f.name.clone()
+            } else {
+                format!("{} [{}]", f.name, source_label.to_uppercase())
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(Color::Cyan)),
+                Span::styled(display_name, style),
+            ]))
+        })
         .collect();
 
     let title = format!(
-        " Choose Origin Feat (Search: {}▌) ",
-        app.builder.feat_picker_search
+        " Choose Origin Feat — {} feat(s) — Search: {}▌ ",
+        len, app.builder.feat_picker_search
     );
     let list = List::new(items)
         .block(
@@ -345,47 +372,42 @@ fn render_feat_modal(app: &mut App, frame: &mut Frame, area: Rect) {
                 .bg(Color::Cyan)
                 .fg(Color::Black)
                 .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol(">> ");
+        );
 
     frame.render_stateful_widget(list, popup_area, &mut app.builder.feat_list_state);
 }
 
 fn handle_feat_modal_key(app: &mut App, key: KeyEvent) {
+    let lvl = app.builder.progression_slot_level.unwrap_or(1);
     let feats = get_origin_feats(app);
-    let search = app.builder.feat_picker_search.to_lowercase();
-    let filtered: Vec<_> = feats
-        .iter()
-        .filter(|f| search.is_empty() || f.name.to_lowercase().contains(&search))
-        .collect();
+    let filtered = get_valid_asi_feats(&feats, lvl, &app.builder.feat_picker_search);
+    let len = filtered.len();
 
     match key.code {
         KeyCode::Esc => {
             app.builder.show_feat_modal = false;
             app.builder.feat_picker_search.clear();
+            app.builder.feat_list_state.select(None);
         }
         KeyCode::Up => {
             let cur = app.builder.feat_list_state.selected().unwrap_or(0);
-            let next = if cur > 0 {
-                cur - 1
-            } else {
-                filtered.len().saturating_sub(1)
-            };
+            let next = if cur > 0 { cur - 1 } else { len.saturating_sub(1) };
             app.builder.feat_list_state.select(Some(next));
         }
         KeyCode::Down => {
             let cur = app.builder.feat_list_state.selected().unwrap_or(0);
-            let next = if cur + 1 < filtered.len() { cur + 1 } else { 0 };
+            let next = if cur + 1 < len { cur + 1 } else { 0 };
             app.builder.feat_list_state.select(Some(next));
         }
         KeyCode::Enter => {
             let selected = app.builder.feat_list_state.selected().unwrap_or(0);
-            if let Some(f) = filtered.get(selected) {
+            if let Some(f) = filtered.get(selected.min(len.saturating_sub(1))) {
                 app.builder.background_feat_id = Some(f.id);
                 app.status_msg = format!("Origin Feat '{}' selected.", f.name);
             }
             app.builder.show_feat_modal = false;
             app.builder.feat_picker_search.clear();
+            app.builder.feat_list_state.select(None);
         }
         KeyCode::Backspace => {
             app.builder.feat_picker_search.pop();
@@ -917,7 +939,7 @@ fn render_asi_stats_stage(app: &mut App, frame: &mut Frame, area: Rect, lvl: i32
     }
 }
 
-fn get_valid_asi_feats<'a>(
+pub fn get_valid_asi_feats<'a>(
     feats: &'a [crate::models::Feat],
     lvl: i32,
     search: &str,
@@ -1265,6 +1287,7 @@ fn submit_asi_stats(app: &mut App) {
             bump_cha: Some(bumps[5]),
             feat_id: None,
             source_type: Some("level".to_string()),
+            gained_at_level: Some(lvl),
         };
         let rt = app.rt.clone();
         let client = app.client.clone();
@@ -1342,6 +1365,7 @@ fn submit_asi_feat(app: &mut App) {
             bump_cha: None,
             feat_id: Some(feat.id),
             source_type: Some("level".to_string()),
+            gained_at_level: Some(lvl),
         };
         let rt = app.rt.clone();
         let client = app.client.clone();
